@@ -1,0 +1,6 @@
+python-chess>=1.10
+tensorflow>=2.15
+Pillow>=10.0
+cairosvg>=2.7
+numpy>=1.24
+tensorflowjs>=4.0

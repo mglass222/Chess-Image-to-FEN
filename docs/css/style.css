@@ -1,0 +1,224 @@
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: #1a1a2e;
+    color: #e0e0e0;
+    min-height: 100vh;
+}
+
+.container {
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 2rem 1rem;
+}
+
+header {
+    text-align: center;
+    margin-bottom: 2rem;
+}
+
+header h1 {
+    font-size: 2rem;
+    color: #ffffff;
+    margin-bottom: 0.5rem;
+}
+
+.subtitle {
+    color: #a0a0b0;
+    font-size: 1.1rem;
+}
+
+/* Status bar */
+.status {
+    text-align: center;
+    padding: 0.75rem;
+    margin-bottom: 1.5rem;
+    border-radius: 8px;
+    background: #16213e;
+    color: #a0c4ff;
+    font-size: 0.95rem;
+    transition: all 0.3s ease;
+}
+
+.status.ready {
+    background: #1b3a2a;
+    color: #81c784;
+}
+
+.status.processing {
+    background: #2a2a1b;
+    color: #ffd54f;
+}
+
+.status.error {
+    background: #3a1b1b;
+    color: #ef5350;
+}
+
+/* Drop zone */
+.drop-zone {
+    border: 2px dashed #4a4a6a;
+    border-radius: 16px;
+    padding: 3rem 2rem;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    background: #16213e;
+    margin-bottom: 2rem;
+}
+
+.drop-zone:hover,
+.drop-zone.drag-over {
+    border-color: #6c63ff;
+    background: #1a2744;
+}
+
+.drop-icon {
+    width: 48px;
+    height: 48px;
+    color: #6c63ff;
+    margin-bottom: 1rem;
+}
+
+.drop-zone-content p {
+    font-size: 1.1rem;
+    margin-bottom: 0.25rem;
+}
+
+.drop-hint {
+    color: #666;
+    font-size: 0.9rem !important;
+}
+
+/* Results */
+.results {
+    animation: fadeIn 0.4s ease;
+}
+
+.results.hidden {
+    display: none;
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+.results-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1.5rem;
+    margin-bottom: 1.5rem;
+}
+
+@media (max-width: 700px) {
+    .results-grid {
+        grid-template-columns: 1fr;
+    }
+}
+
+.result-panel {
+    background: #16213e;
+    border-radius: 12px;
+    padding: 1rem;
+}
+
+.result-panel h3 {
+    margin-bottom: 0.75rem;
+    font-size: 1rem;
+    color: #a0a0b0;
+}
+
+.image-container {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
+
+.image-container canvas {
+    max-width: 100%;
+    border-radius: 4px;
+}
+
+/* FEN output */
+.fen-output {
+    background: #16213e;
+    border-radius: 12px;
+    padding: 1.25rem;
+    margin-bottom: 1rem;
+}
+
+.fen-output label {
+    display: block;
+    font-size: 0.9rem;
+    color: #a0a0b0;
+    margin-bottom: 0.5rem;
+}
+
+.fen-row {
+    display: flex;
+    gap: 0.5rem;
+}
+
+#fen-text {
+    flex: 1;
+    padding: 0.75rem;
+    font-family: "Consolas", "Monaco", monospace;
+    font-size: 0.95rem;
+    background: #0f3460;
+    color: #e0e0e0;
+    border: 1px solid #2a2a4a;
+    border-radius: 8px;
+    outline: none;
+}
+
+#copy-btn {
+    padding: 0.75rem 1.25rem;
+    background: #6c63ff;
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 0.95rem;
+    transition: background 0.2s;
+}
+
+#copy-btn:hover {
+    background: #5a52d5;
+}
+
+.fen-note {
+    margin-top: 0.75rem;
+    font-size: 0.8rem;
+    color: #666;
+}
+
+/* Controls */
+.controls {
+    display: flex;
+    gap: 0.75rem;
+    justify-content: center;
+    flex-wrap: wrap;
+}
+
+.control-btn {
+    padding: 0.6rem 1.25rem;
+    background: #16213e;
+    color: #a0c4ff;
+    border: 1px solid #2a2a4a;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 0.9rem;
+    text-decoration: none;
+    transition: all 0.2s;
+}
+
+.control-btn:hover {
+    background: #1a2744;
+    border-color: #6c63ff;
+}

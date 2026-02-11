@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chess Image to FEN</title>
+    <link rel="stylesheet" href="css/style.css">
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4/dist/tf.min.js"></script>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Chess Image to FEN</h1>
+            <p class="subtitle">Drop a chess board screenshot to get the FEN position</p>
+        </header>
+
+        <div id="status" class="status">Loading AI model...</div>
+
+        <div id="drop-zone" class="drop-zone">
+            <div class="drop-zone-content">
+                <svg class="drop-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                    <polyline points="17 8 12 3 7 8"/>
+                    <line x1="12" y1="3" x2="12" y2="15"/>
+                </svg>
+                <p>Drag & drop a chess board image here</p>
+                <p class="drop-hint">or click to browse</p>
+            </div>
+            <input type="file" id="file-input" accept="image/*" hidden>
+        </div>
+
+        <div id="results" class="results hidden">
+            <div class="results-grid">
+                <div class="result-panel">
+                    <h3>Original Image</h3>
+                    <div id="original-image-container" class="image-container">
+                        <canvas id="original-canvas"></canvas>
+                    </div>
+                </div>
+                <div class="result-panel">
+                    <h3>Detected Position</h3>
+                    <div id="preview-board" class="image-container">
+                        <canvas id="preview-canvas" width="400" height="400"></canvas>
+                    </div>
+                </div>
+            </div>
+
+            <div class="fen-output">
+                <label for="fen-text">FEN:</label>
+                <div class="fen-row">
+                    <input type="text" id="fen-text" readonly>
+                    <button id="copy-btn" title="Copy FEN">Copy</button>
+                </div>
+                <p class="fen-note">
+                    Note: Only piece placement is detected from the image.
+                    Side to move, castling, and en passant default to standard values.
+                </p>
+            </div>
+
+            <div class="controls">
+                <button id="flip-btn" class="control-btn">Flip Board</button>
+                <a id="lichess-link" class="control-btn" target="_blank" rel="noopener">
+                    Analyze on Lichess
+                </a>
+            </div>
+        </div>
+    </div>
+
+    <script type="module" src="js/app.js"></script>
+</body>
+</html>
