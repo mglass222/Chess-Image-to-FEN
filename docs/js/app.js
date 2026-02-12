@@ -18,6 +18,7 @@ const fenText = document.getElementById('fen-text');
 const copyBtn = document.getElementById('copy-btn');
 const flipBtn = document.getElementById('flip-btn');
 const lichessLink = document.getElementById('lichess-link');
+const pasteBtn = document.getElementById('paste-btn');
 
 // State
 let currentPredictions = null;
@@ -67,7 +68,8 @@ dropZone.addEventListener('drop', (e) => {
     }
 });
 
-dropZone.addEventListener('click', () => {
+dropZone.addEventListener('click', (e) => {
+    if (e.target === pasteBtn || pasteBtn.contains(e.target)) return;
     fileInput.click();
 });
 
@@ -80,7 +82,7 @@ fileInput.addEventListener('change', () => {
 
 // --- Clipboard paste ---
 
-document.addEventListener('paste', (e) => {
+window.addEventListener('paste', (e) => {
     const items = e.clipboardData?.items;
     if (!items) return;
 
@@ -93,6 +95,25 @@ document.addEventListener('paste', (e) => {
         }
     }
 });
+
+async function pasteFromClipboard() {
+    try {
+        const clipboardItems = await navigator.clipboard.read();
+        for (const item of clipboardItems) {
+            const imageType = item.types.find(t => t.startsWith('image/'));
+            if (imageType) {
+                const blob = await item.getType(imageType);
+                processFile(blob);
+                return;
+            }
+        }
+        setStatus('No image found in clipboard.', 'error');
+    } catch (err) {
+        setStatus('Clipboard access denied. Try Ctrl+V instead.', 'error');
+    }
+}
+
+pasteBtn.addEventListener('click', pasteFromClipboard);
 
 // --- Image processing pipeline ---
 
