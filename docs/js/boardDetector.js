@@ -16,8 +16,9 @@ export function detectAndSegment(img) {
     const ctx = canvas.getContext('2d');
     ctx.drawImage(img, 0, 0);
 
-    // Detect the board bounding box
-    const rect = findBoardRect(canvas);
+    // Detect the board bounding box and refine alignment
+    const rough = findBoardRect(canvas);
+    const rect = refineBoardRect(canvas, rough);
 
     // Segment into 64 tiles
     return extractTiles(canvas, rect);
@@ -182,6 +183,100 @@ function findBoardBounds(projection, length) {
 }
 
 /**
+ * Refine rough board bounds by searching for the grid alignment that best
+ * matches the alternating light/dark chessboard pattern.
+ * @param {HTMLCanvasElement} canvas
+ * @param {{x: number, y: number, width: number, height: number}} rough
+ * @returns {{x: number, y: number, width: number, height: number}}
+ */
+function refineBoardRect(canvas, rough) {
+    const ctx = canvas.getContext('2d');
+    const pixels = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+    const imgW = canvas.width;
+
+    const maxTrim = Math.round(Math.min(rough.width, rough.height) * 0.15);
+    const steps = 12;
+    const step = Math.max(1, Math.round(maxTrim / steps));
+
+    let bestScore = -1;
+    let bestRect = rough;
+
+    for (let dx = 0; dx <= maxTrim; dx += step) {
+        for (let dy = 0; dy <= maxTrim; dy += step) {
+            for (let ds = 0; ds <= maxTrim; ds += step) {
+                const size = Math.min(rough.width - dx, rough.height - dy) - ds;
+                if (size < rough.width * 0.7) continue;
+
+                const rect = {
+                    x: rough.x + dx,
+                    y: rough.y + dy,
+                    width: size,
+                    height: size,
+                };
+
+                const score = chessboardScore(pixels, imgW, rect);
+                if (score > bestScore) {
+                    bestScore = score;
+                    bestRect = rect;
+                }
+            }
+        }
+    }
+
+    return bestRect;
+}
+
+/**
+ * Score how well a candidate rectangle matches an 8x8 alternating color grid.
+ * Samples tile corners (to avoid piece pixels) and checks light/dark parity.
+ * @returns {number} 0–64 (higher = better alignment)
+ */
+function chessboardScore(pixels, imgW, rect) {
+    const tileW = rect.width / 8;
+    const tileH = rect.height / 8;
+    const margin = 0.15;
+
+    const brightness = [];
+    for (let row = 0; row < 8; row++) {
+        for (let col = 0; col < 8; col++) {
+            const corners = [
+                [rect.x + (col + margin) * tileW, rect.y + (row + margin) * tileH],
+                [rect.x + (col + 1 - margin) * tileW, rect.y + (row + margin) * tileH],
+                [rect.x + (col + margin) * tileW, rect.y + (row + 1 - margin) * tileH],
+                [rect.x + (col + 1 - margin) * tileW, rect.y + (row + 1 - margin) * tileH],
+            ];
+
+            let maxB = 0;
+            for (const [cx, cy] of corners) {
+                const px = Math.round(cx);
+                const py = Math.round(cy);
+                if (px < 0 || py < 0 || px >= imgW) continue;
+                const idx = (py * imgW + px) * 4;
+                const b = 0.299 * pixels[idx] + 0.587 * pixels[idx + 1] + 0.114 * pixels[idx + 2];
+                if (b > maxB) maxB = b;
+            }
+            brightness.push(maxB);
+        }
+    }
+
+    // Median brightness as threshold
+    const sorted = [...brightness].sort((a, b) => a - b);
+    const threshold = sorted[32];
+
+    // Try both parities
+    let score0 = 0, score1 = 0;
+    for (let row = 0; row < 8; row++) {
+        for (let col = 0; col < 8; col++) {
+            const isLight = brightness[row * 8 + col] > threshold;
+            if (isLight === ((row + col) % 2 === 0)) score0++;
+            if (isLight === ((row + col) % 2 === 1)) score1++;
+        }
+    }
+
+    return Math.max(score0, score1);
+}
+
+/**
  * Extract 64 tile canvases from the board region.
  * @param {HTMLCanvasElement} canvas - Full image canvas
  * @param {{x: number, y: number, width: number, height: number}} rect - Board bounding box
@@ -227,5 +322,6 @@ export function getBoardRect(img) {
     canvas.height = img.naturalHeight || img.height;
     const ctx = canvas.getContext('2d');
     ctx.drawImage(img, 0, 0);
-    return findBoardRect(canvas);
+    const rough = findBoardRect(canvas);
+    return refineBoardRect(canvas, rough);
 }
