@@ -11,7 +11,7 @@ let model = null;
  * @returns {Promise<void>}
  */
 export async function loadModel() {
-    model = await tf.loadLayersModel('./model/model.json');
+    model = await tf.loadGraphModel('./model/model.json');
     // Warm up the model with a dummy prediction
     const dummy = tf.zeros([1, TILE_SIZE, TILE_SIZE, 3]);
     model.predict(dummy).dispose();
