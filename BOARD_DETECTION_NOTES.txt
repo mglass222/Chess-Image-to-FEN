@@ -1,0 +1,371 @@
+Board Detection Implementation Notes
+=====================================
+Last updated: 2026-02-12
+
+OVERVIEW
+--------
+The board detector (docs/js/boardDetector.js) finds a chessboard in a screenshot
+and segments it into 64 tile images for piece classification. It works in three
+stages: coarse search, gradient-based refinement, and tile extraction.
+
+
+STAGE 1: findBoardRect (Coarse Search)
+---------------------------------------
+Goal: Find the approximate board region (position + size).
+
+Strategy:
+1. First try the largest centered square (size = min(width, height)).
+   Score it with chessboardScore. If score >= 50/64, return it immediately.
+   This handles cases where the pasted image IS the board (e.g. chess.com).
+
+2. If the centered square scores poorly (< 50), run a sliding window search:
+   - Size range: 50% to 100% of min(width, height), in 10 steps
+   - Position: 13x13 grid at each size
+   - Pick the candidate with the highest chessboardScore
+
+Key insight: The coarse search doesn't need to be pixel-perfect. It just needs
+to get within ~15% of the correct size and within half a tile of the correct
+position. The refinement stage handles the rest.
+
+
+STAGE 2: refineBoardRect (Gradient-Based Refinement)
+-----------------------------------------------------
+Goal: Pixel-accurate alignment of the grid to actual tile boundaries.
+
+THIS IS THE HARD PART. Previous failed approaches and why:
+
+  FAILED: contrastScore tiebreaker (measuring light/dark tile separation)
+    - chessboardScore returns integers 0-64, so many positions tie
+    - contrastScore favored slightly-too-small rects (corners sample deeper
+      inside tiles = cleaner readings = higher contrast)
+    - Also favored wrong positions due to maxB sampling asymmetry
+
+  FAILED: "prefer larger rect" tiebreaker
+    - Overshot in the opposite direction, including border pixels
+
+  FAILED: Position-only gradient search (fixed tile size)
+    - If the coarse search got the SIZE wrong (e.g. 1244px instead of 1280px),
+      the expected grid lines progressively drift from actual ones. Over 7 grid
+      lines, even a 3% size error accumulates to ~30px at the far edge. No
+      position offset can fix this.
+
+WHAT WORKS: Joint gradient search over offset AND tile size.
+
+Algorithm:
+1. Build a horizontal gradient profile across the FULL IMAGE width.
+   - Sample 16 horizontal scan lines (2 per tile row, at 10% and 90% from
+     top/bottom of each row to avoid piece centers)
+   - At each pixel, compute |brightness(x+1) - brightness(x)|
+   - Sum across all 16 scan lines → averaged gradient profile
+
+2. Search over (offset, tileWidth) pairs:
+   - offset: rough.x ± halfTile (pixel by pixel)
+   - tileWidth: nominal ± 15% (in 0.5px steps)
+   - For each pair, compute alignment score: sum of gradient values at the
+     7 expected internal grid line positions (each with ±2px window)
+   - The (offset, tileWidth) with highest score wins
+
+3. Repeat vertically using the refined x parameters for scan line placement.
+
+4. Final rect: x=bestOffset, y=bestYOffset, size=min(8*bestTW, 8*bestTH)
+
+Why this works:
+- Tile boundaries create strong, consistent brightness transitions (light↔dark
+  squares). These show up as clear spikes in the gradient profile.
+- By searching BOTH offset and tile size, the 7 grid line positions are
+  independently constrained. Even if the coarse search got the wrong size,
+  the gradient refinement recovers the correct size from the actual spacing
+  of brightness transitions.
+- Averaging across 16 scan lines makes it robust to pieces (which only affect
+  local areas) and coordinate labels.
+- The ±2px window around each expected grid line handles anti-aliasing and
+  sub-pixel rendering.
+
+
+STAGE 3: chessboardScore (Pattern Scoring)
+------------------------------------------
+Used only by findBoardRect for coarse search. Returns integer 0-64.
+
+Algorithm:
+- For each of the 64 tiles, sample 4 corners (15% margin from edges)
+- Take MAX brightness of the 4 corners (max avoids piece pixels which are
+  typically darker than light squares)
+- Use median brightness as light/dark threshold
+- Count how many tiles match the expected alternating pattern
+- Try both parities, return the better one
+
+Limitations:
+- Integer-valued, so many slightly-different rects tie
+- Pieces and coordinate labels can flip individual tile classifications
+- Shifting by exactly 1 tile gives the same score (pattern repeats)
+These limitations are fine for coarse search; gradient refinement handles
+the fine alignment.
+
+
+NEURAL NETWORK: MODEL SELECTION
+-------------------------------
+Architecture: MobileNetV2 (torchvision pretrained on ImageNet)
+  - Chosen for being lightweight enough to run in-browser via ONNX Runtime Web
+  - ~2.2M parameters, exports to ~8.7 MB ONNX file
+  - Pretrained ImageNet weights provide strong feature extraction out of the box;
+    only fine-tuning is needed for the chess piece domain
+
+Model structure (training/model.py):
+  - ChessPieceClassifier:
+    - Baked-in normalization: accepts raw [0,255] float32 input, divides by 255,
+      then applies ImageNet mean/std normalization. This means the browser can
+      pass pixel values directly without any preprocessing.
+    - Backbone: MobileNetV2 feature extractor (frozen or fine-tuned)
+    - Head: AdaptiveAvgPool2d(1) → Dropout(0.2) → Linear(1280, 13)
+    - 13 output classes: empty, wP, wN, wB, wR, wQ, wK, bP, bN, bB, bR, bQ, bK
+  - ChessPieceClassifierSoftmax:
+    - Thin wrapper that adds softmax after logits for export
+    - Browser receives probability distributions, takes argmax
+
+Why MobileNetV2 over alternatives:
+  - ResNet/EfficientNet: larger, slower in WASM, marginal accuracy gain for
+    this task (pieces are visually distinct, not a hard classification problem)
+  - Custom small CNN: worse accuracy without pretrained features, especially
+    on unusual piece sets
+  - Vision Transformers: way too large for browser inference
+
+
+NEURAL NETWORK: TRAINING DATA GENERATION
+-----------------------------------------
+Training data is 100% synthetic (training/generate_data.py). No manual
+labeling needed.
+
+How tiles are generated:
+  1. For each piece set × piece type × board color theme:
+     - Parse the piece SVG, scale to 50x50 px
+     - Render it onto a solid-color background (the square color)
+     - Save as a labeled PNG tile
+  2. Empty tiles: solid-color squares for each theme color
+  3. Real board screenshots (optional): slice starting-position screenshots
+     from training/real_boards/ into 64 labeled tiles each
+
+Piece sets used for training (all from lichess, 40 sets configured):
+  alpha, anarcandy, caliente, california, cardinal, cburnett, celtic,
+  chess7, chessnut, companion, cooke, disgusted, dubrovny, fantasy, firi,
+  fresca, gioco, governor, horsey, icpieces, kiwen-suwi, kosal, leipzig,
+  letter, maestro, merida, mpchess, pirouetti, pixel, reillycraig,
+  rhosgfx, riohacha, shahi-ivory-brown, shapes, spatial, staunty,
+  tatiana, xkcd
+
+  Note: Sets using SVG gradients are auto-skipped (svglib can't render them).
+  The actual number of usable sets depends on which ones are downloaded and
+  which have gradient-free SVGs.
+
+  Source: https://github.com/lichess-org/lila/tree/master/public/piece/
+
+Board color themes (10 themes, each with light + dark = 20 background colors):
+  chess.com green:    #eeeed2 / #769656
+  chess.com brown:    #f0d9b5 / #b58863
+  lichess blue:       #dee3e6 / #8ca2ad
+  lichess purple:     #e8e9b7 / #b7c0d4
+  gray:               #efefef / #8b8b8b
+  ice:                #e0e0e0 / #a0a0b0
+  olive:              #f5f5dc / #6b8e23
+  red:                #fce4ec / #c62828
+  indigo:             #e8eaf6 / #3f51b5
+  amber:              #fff8e1 / #ff8f00
+
+Total tiles generated: ~(usable_sets × 12 pieces × 20 backgrounds) + 20 empty
+  With ~30 usable sets: ~7,200 piece tiles + 20 empty tiles ≈ 7,220 tiles
+
+
+NEURAL NETWORK: TRAINING PROCEDURE
+------------------------------------
+Pipeline: training/train.py
+
+Input: 50x50 PNG tiles from training/data/tiles/{class_name}/
+  - Resized to 224x224 (MobileNetV2 expected input size)
+  - Train augmentations: ColorJitter (brightness=0.3, contrast=0.3,
+    saturation=0.3, hue=0.05), RandomAdjustSharpness(factor=2, p=0.3)
+  - Val: no augmentation, just resize
+  - Images kept in [0, 255] range (model normalizes internally)
+
+Training config:
+  - Optimizer: Adam, lr=1e-4
+  - Scheduler: ReduceLROnPlateau (factor=0.5, patience=3, min_lr=1e-6)
+  - Loss: CrossEntropyLoss
+  - Batch size: 96
+  - Max epochs: 30 (early stopping patience=5)
+  - Validation split: 15% (random, seed=42)
+  - Class label order remapped from ImageFolder's alphabetical to config order
+
+Best checkpoint saved to: training/checkpoints/best.pt
+
+
+NEURAL NETWORK: EXPORT AND BROWSER INFERENCE
+----------------------------------------------
+Export pipeline: training/export_onnx.py
+  PyTorch (.pt) → ONNX (.onnx) with softmax baked in
+  - Wraps trained model in ChessPieceClassifierSoftmax
+  - ONNX opset 17, dynamic batch size
+  - Output: docs/model/model.onnx
+
+Browser inference: docs/js/classifier.js
+  - Uses ONNX Runtime Web (ort) with WASM execution provider
+  - Loads model.onnx at startup, warms up with dummy prediction
+  - For classification: all 64 tiles batched into a single inference call
+  - Each tile: canvas → resize to 224x224 → extract RGBA → convert to
+    RGB CHW float32 [0,255] → feed to model
+  - Model outputs 64 × 13 probability matrix
+  - Argmax per tile gives the predicted piece class
+
+
+PIECE RENDERING
+---------------
+The board preview (docs/js/boardRenderer.js) uses lichess cburnett SVG pieces
+stored locally in docs/pieces/. Pieces are preloaded at app startup in parallel
+with the ONNX model. Falls back to Unicode chess symbols if SVGs fail to load.
+
+Piece files: wK.svg, wQ.svg, wR.svg, wB.svg, wN.svg, wP.svg,
+             bK.svg, bQ.svg, bR.svg, bB.svg, bN.svg, bP.svg
+Source: https://github.com/lichess-org/lila/tree/master/public/piece/cburnett
+
+
+END-TO-END PIPELINE (app.js)
+----------------------------
+1. User drops/pastes/selects an image
+2. loadImage(): creates an HTMLImageElement from the file blob
+3. processImage():
+   a. getBoardRect(img)  → rough rect via findBoardRect → refined via refineBoardRect
+   b. drawOriginal()     → draws image + bounding box + grid overlay on canvas
+   c. detectAndSegment() → same detection pipeline, then extractTiles() → 64 canvases
+   d. classifyBoard()    → batch ONNX inference → 64 predictions (classIndex + confidence)
+   e. detectOrientation()→ checks top/bottom rows for piece colors to detect flip
+   f. buildFEN()         → converts predictions to FEN string, reverses if flipped
+   g. renderBoard()      → draws FEN onto preview canvas with lichess pieces
+   h. Updates lichess analysis link with FEN
+
+Note: getBoardRect and detectAndSegment run the detection pipeline TWICE
+(once for the overlay, once for segmentation). This is wasteful but simple.
+If performance matters, refactor to run detection once and share the result.
+
+
+FEN BUILDER AND ORIENTATION DETECTION (fenBuilder.js)
+------------------------------------------------------
+Class order (must match training config):
+  0=empty, 1=wP, 2=wN, 3=wB, 4=wR, 5=wQ, 6=wK,
+  7=bP, 8=bN, 9=bB, 10=bR, 11=bQ, 12=bK
+
+Orientation detection heuristic:
+  - Standard: black pieces on top row, white on bottom
+  - Flipped: white pieces on top row, black on bottom
+  - Counts piece colors in top 8 and bottom 8 tiles
+  - If topWhite > topBlack AND bottomBlack > bottomWhite → flipped
+  - When flipped, the 8x8 grid is reversed (rows and columns) before FEN output
+
+FEN defaults the non-visual fields: "w KQkq - 0 1" (white to move, all
+castling, no en passant). These cannot be determined from an image.
+
+
+DEPENDENCIES AND HOW TO RUN
+----------------------------
+Browser app (no build step):
+  cd docs && python -m http.server 8080
+  Open http://localhost:8080
+  Dependencies: ONNX Runtime Web loaded from CDN in index.html
+
+Training pipeline (Python):
+  cd training
+  pip install torch torchvision Pillow svglib reportlab
+  python piece_sets/download_pieces.py   # Download lichess SVGs
+  python generate_data.py                # Generate training tiles
+  python train.py                        # Train model (GPU recommended)
+  python export_onnx.py                  # Export to ONNX for browser
+
+  Note: requirements.txt lists TensorFlow deps from an earlier version.
+  The current pipeline uses PyTorch + ONNX, NOT TensorFlow/TFJS.
+  export_tfjs.py is a leftover from the TF era and is not used.
+
+
+KNOWN LIMITATIONS AND GOTCHAS
+------------------------------
+1. Board detection assumes the board is the largest feature in the image.
+   Won't work well if the board is a small part of a larger screenshot with
+   lots of UI around it. The sliding window only goes down to 50% of image
+   size.
+
+2. chessboardScore is unreliable on boards with:
+   - Move highlights (chess.com colors two squares yellow/green)
+   - Very low-contrast themes (e.g. all-gray boards)
+   - Heavy piece clustering that obscures all 4 corners of many tiles
+   The gradient refinement compensates for this since it looks at tile
+   BOUNDARIES not tile contents.
+
+3. The gradient refinement assumes tile boundaries have brightness transitions.
+   This fails on monochrome boards (all squares same color). No known chess
+   sites use monochrome boards, so this is theoretical.
+
+4. Piece classification struggles with:
+   - Piece sets not in the training data (the 40 lichess sets cover most cases)
+   - 3D rendered pieces or physical board photos (trained only on 2D SVG renders)
+   - Very small images where tiles are < 20px (resizing to 224x224 introduces
+     too much blur)
+
+5. Orientation detection fails when:
+   - Board is in mid-game with pieces scattered (no clear top/bottom pattern)
+   - User has manual "Flip Board" button as fallback
+
+6. The model runs in WASM (not WebGL/WebGPU) for maximum compatibility.
+   First inference is slow (~2-3s) but subsequent ones are fast. The warm-up
+   dummy prediction in loadModel() hides this.
+
+7. On Windows, the dev server must be started with Git Bash paths:
+     cd /c/Users/.../docs && python -m http.server 8080
+   NOT Windows paths (cd C:\Users\... fails in the bash sandbox).
+
+
+DEBUGGING TIPS
+--------------
+- Add console.log to findBoardRect to see image dimensions and centered rect
+  score. Score < 50 means it falls through to sliding window (slower, less
+  precise). Score >= 50 means the image IS the board.
+
+- Add console.log to refineBoardRect to see bestTW, bestTH, bestOffset,
+  bestYOffset. Compare bestTW * 8 with image width to see if size correction
+  is working.
+
+- To visualize what the gradient profile looks like, dump hGrad to console
+  and plot it. You should see 7 clear spikes at evenly-spaced intervals.
+  If the spikes are weak or absent, the board theme has low contrast.
+
+- The overlay grid lines in the original image panel are the best visual
+  debug tool. If grid lines align with actual tile boundaries, detection is
+  working. If they're off, check whether the issue is position, size, or both.
+
+- The model outputs probabilities for 13 classes. Check the browser console
+  for the raw predictions array to see if misclassifications are low-confidence
+  (model unsure) or high-confidence wrong (training data issue).
+
+
+FILE STRUCTURE
+--------------
+docs/
+  js/
+    boardDetector.js  - Board detection + segmentation (this file's notes)
+    boardRenderer.js  - FEN → canvas board preview with lichess pieces
+    classifier.js     - ONNX model inference for piece classification
+    fenBuilder.js     - Tile predictions → FEN string + orientation detection
+    app.js            - UI orchestration, drag/drop, clipboard paste
+  pieces/             - Lichess cburnett SVG piece images (12 files)
+  model/              - ONNX model for piece classification
+  css/                - Stylesheets
+  index.html          - Main page
+
+training/
+  config.py           - All hyperparameters, paths, piece set list, themes
+  model.py            - MobileNetV2 classifier definition
+  train.py            - Training loop with early stopping
+  generate_data.py    - Synthetic tile generation from SVG pieces
+  export_onnx.py      - PyTorch → ONNX export with softmax
+  export_tfjs.py      - (LEGACY, unused) TensorFlow.js export
+  piece_sets/         - Downloaded lichess SVG piece sets
+    download_pieces.py - Script to download from GitHub
+  data/tiles/         - Generated training tiles (gitignored)
+  checkpoints/        - Saved model checkpoints (gitignored)
+  real_boards/        - Optional real board screenshots for training
+  review_slices/      - Debug tool for reviewing tile extraction

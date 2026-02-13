@@ -1,5 +1,6 @@
 /**
  * Render a chess board preview from a FEN string using canvas.
+ * Uses lichess cburnett piece images.
  */
 
 const LIGHT_COLOR = '#f0d9b5';
@@ -7,11 +8,34 @@ const DARK_COLOR = '#b58863';
 const SQUARE_SIZE = 50;
 const BOARD_PX = SQUARE_SIZE * 8;
 
-// Unicode chess pieces
-const PIECE_UNICODE = {
-    'K': '\u2654', 'Q': '\u2655', 'R': '\u2656', 'B': '\u2657', 'N': '\u2658', 'P': '\u2659',
-    'k': '\u265A', 'q': '\u265B', 'r': '\u265C', 'b': '\u265D', 'n': '\u265E', 'p': '\u265F',
+// Map FEN characters to piece image filenames
+const PIECE_FILES = {
+    'K': 'wK', 'Q': 'wQ', 'R': 'wR', 'B': 'wB', 'N': 'wN', 'P': 'wP',
+    'k': 'bK', 'q': 'bQ', 'r': 'bR', 'b': 'bB', 'n': 'bN', 'p': 'bP',
 };
+
+// Preloaded piece images
+const pieceImages = {};
+let piecesReady = false;
+
+/**
+ * Preload all piece SVG images. Call once at startup.
+ * @returns {Promise<void>}
+ */
+export function preloadPieces() {
+    const promises = Object.entries(PIECE_FILES).map(([fen, file]) => {
+        return new Promise((resolve) => {
+            const img = new Image();
+            img.onload = () => {
+                pieceImages[fen] = img;
+                resolve();
+            };
+            img.onerror = () => resolve();
+            img.src = `pieces/${file}.svg`;
+        });
+    });
+    return Promise.all(promises).then(() => { piecesReady = true; });
+}
 
 /**
  * Render a FEN position onto a canvas element.
@@ -68,21 +92,31 @@ function drawSquare(ctx, file, rank) {
 }
 
 function drawPiece(ctx, file, rank, piece) {
+    const x = file * SQUARE_SIZE;
+    const y = rank * SQUARE_SIZE;
+
+    // Use SVG image if loaded
+    const img = pieceImages[piece];
+    if (img) {
+        ctx.drawImage(img, x, y, SQUARE_SIZE, SQUARE_SIZE);
+        return;
+    }
+
+    // Fallback to Unicode
+    const PIECE_UNICODE = {
+        'K': '\u2654', 'Q': '\u2655', 'R': '\u2656', 'B': '\u2657', 'N': '\u2658', 'P': '\u2659',
+        'k': '\u265A', 'q': '\u265B', 'r': '\u265C', 'b': '\u265D', 'n': '\u265E', 'p': '\u265F',
+    };
     const unicode = PIECE_UNICODE[piece];
     if (!unicode) return;
 
-    const x = file * SQUARE_SIZE + SQUARE_SIZE / 2;
-    const y = rank * SQUARE_SIZE + SQUARE_SIZE / 2;
-
+    const cx = x + SQUARE_SIZE / 2;
+    const cy = y + SQUARE_SIZE / 2;
     ctx.font = `${SQUARE_SIZE * 0.8}px serif`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-
-    // Draw shadow for better contrast
     ctx.fillStyle = 'rgba(0, 0, 0, 0.3)';
-    ctx.fillText(unicode, x + 1, y + 1);
-
-    // Draw piece
+    ctx.fillText(unicode, cx + 1, cy + 1);
     ctx.fillStyle = piece === piece.toUpperCase() ? '#fff' : '#000';
-    ctx.fillText(unicode, x, y);
+    ctx.fillText(unicode, cx, cy);
 }

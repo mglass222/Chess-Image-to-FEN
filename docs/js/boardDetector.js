@@ -1,6 +1,6 @@
 /**
  * Board detection and segmentation.
- * v1: Simple grid division with basic edge-based border trimming.
+ * v2: Chessboard pattern scoring to locate the board, with refinement.
  */
 
 /**
@@ -26,8 +26,8 @@ export function detectAndSegment(img) {
 
 /**
  * Find the bounding rectangle of the chess board in the image.
- * Uses edge detection to find the largest square-ish region with grid lines.
- * Falls back to using the full image if detection fails.
+ * Uses chessboard pattern scoring to locate the board region.
+ * Two-phase search: coarse grid then fine refinement around best candidate.
  * @param {HTMLCanvasElement} canvas
  * @returns {{x: number, y: number, width: number, height: number}}
  */
@@ -35,186 +35,42 @@ function findBoardRect(canvas) {
     const ctx = canvas.getContext('2d');
     const w = canvas.width;
     const h = canvas.height;
-    const imageData = ctx.getImageData(0, 0, w, h);
-    const pixels = imageData.data;
+    const pixels = ctx.getImageData(0, 0, w, h).data;
 
-    // Convert to grayscale
-    const gray = new Float32Array(w * h);
-    for (let i = 0; i < w * h; i++) {
-        const r = pixels[i * 4];
-        const g = pixels[i * 4 + 1];
-        const b = pixels[i * 4 + 2];
-        gray[i] = 0.299 * r + 0.587 * g + 0.114 * b;
-    }
-
-    // Compute horizontal and vertical Sobel gradients
-    const sobelH = new Float32Array(w * h);
-    const sobelV = new Float32Array(w * h);
-    for (let y = 1; y < h - 1; y++) {
-        for (let x = 1; x < w - 1; x++) {
-            const idx = y * w + x;
-            // Horizontal gradient (detects vertical edges)
-            sobelH[idx] = Math.abs(
-                -gray[(y-1)*w + (x-1)] + gray[(y-1)*w + (x+1)]
-                -2*gray[y*w + (x-1)] + 2*gray[y*w + (x+1)]
-                -gray[(y+1)*w + (x-1)] + gray[(y+1)*w + (x+1)]
-            );
-            // Vertical gradient (detects horizontal edges)
-            sobelV[idx] = Math.abs(
-                -gray[(y-1)*w + (x-1)] - 2*gray[(y-1)*w + x] - gray[(y-1)*w + (x+1)]
-                +gray[(y+1)*w + (x-1)] + 2*gray[(y+1)*w + x] + gray[(y+1)*w + (x+1)]
-            );
-        }
-    }
-
-    // Project gradients onto axes to find grid lines
-    // Vertical edge projection (sum along rows for each column)
-    const vProj = new Float32Array(w);
-    for (let x = 0; x < w; x++) {
-        let sum = 0;
-        for (let y = 0; y < h; y++) {
-            sum += sobelH[y * w + x];
-        }
-        vProj[x] = sum;
-    }
-
-    // Horizontal edge projection (sum along columns for each row)
-    const hProj = new Float32Array(h);
-    for (let y = 0; y < h; y++) {
-        let sum = 0;
-        for (let x = 0; x < w; x++) {
-            sum += sobelV[y * w + x];
-        }
-        hProj[y] = sum;
-    }
-
-    // Find board boundaries from projections
-    const xBounds = findBoardBounds(vProj, w);
-    const yBounds = findBoardBounds(hProj, h);
-
-    if (xBounds && yBounds) {
-        // Make it square (chess boards are square)
-        let bw = xBounds.end - xBounds.start;
-        let bh = yBounds.end - yBounds.start;
-        const size = Math.min(bw, bh);
-
-        return {
-            x: xBounds.start + Math.floor((bw - size) / 2),
-            y: yBounds.start + Math.floor((bh - size) / 2),
-            width: size,
-            height: size,
-        };
-    }
-
-    // Fallback: assume the board is centered and square
+    // Try the largest centered square first (handles board-only screenshots)
     const size = Math.min(w, h);
-    return {
+    const centeredRect = {
         x: Math.floor((w - size) / 2),
         y: Math.floor((h - size) / 2),
         width: size,
         height: size,
     };
-}
 
-/**
- * Find board boundaries from an edge projection array.
- * Looks for a region with high edge density (the board) surrounded by low density (background).
- * @param {Float32Array} projection
- * @param {number} length
- * @returns {{start: number, end: number}|null}
- */
-function findBoardBounds(projection, length) {
-    // Smooth the projection
-    const smoothed = new Float32Array(length);
-    const kernel = 5;
-    for (let i = 0; i < length; i++) {
-        let sum = 0;
-        let count = 0;
-        for (let j = Math.max(0, i - kernel); j <= Math.min(length - 1, i + kernel); j++) {
-            sum += projection[j];
-            count++;
-        }
-        smoothed[i] = sum / count;
+    if (chessboardScore(pixels, w, centeredRect) >= 50) {
+        return centeredRect;
     }
 
-    // Find threshold (mean + 0.5 * std)
-    let mean = 0;
-    for (let i = 0; i < length; i++) mean += smoothed[i];
-    mean /= length;
-
-    let variance = 0;
-    for (let i = 0; i < length; i++) variance += (smoothed[i] - mean) ** 2;
-    const std = Math.sqrt(variance / length);
-    const threshold = mean + 0.5 * std;
-
-    // Find the longest contiguous region above threshold
-    let bestStart = 0, bestEnd = length, bestLen = 0;
-    let start = -1;
-
-    for (let i = 0; i < length; i++) {
-        if (smoothed[i] > threshold) {
-            if (start === -1) start = i;
-        } else {
-            if (start !== -1) {
-                const len = i - start;
-                if (len > bestLen) {
-                    bestLen = len;
-                    bestStart = start;
-                    bestEnd = i;
-                }
-                start = -1;
-            }
-        }
-    }
-    // Check if the last segment extends to the end
-    if (start !== -1) {
-        const len = length - start;
-        if (len > bestLen) {
-            bestStart = start;
-            bestEnd = length;
-        }
-    }
-
-    // Only return if we found a substantial region (at least 30% of image)
-    if (bestEnd - bestStart > length * 0.3) {
-        return { start: bestStart, end: bestEnd };
-    }
-    return null;
-}
-
-/**
- * Refine rough board bounds by searching for the grid alignment that best
- * matches the alternating light/dark chessboard pattern.
- * @param {HTMLCanvasElement} canvas
- * @param {{x: number, y: number, width: number, height: number}} rough
- * @returns {{x: number, y: number, width: number, height: number}}
- */
-function refineBoardRect(canvas, rough) {
-    const ctx = canvas.getContext('2d');
-    const pixels = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
-    const imgW = canvas.width;
-
-    const maxTrim = Math.round(Math.min(rough.width, rough.height) * 0.15);
-    const steps = 12;
-    const step = Math.max(1, Math.round(maxTrim / steps));
-
+    // Sliding window search across positions and sizes (50%-100% of min dimension)
     let bestScore = -1;
-    let bestRect = rough;
+    let bestRect = centeredRect;
 
-    for (let dx = 0; dx <= maxTrim; dx += step) {
-        for (let dy = 0; dy <= maxTrim; dy += step) {
-            for (let ds = 0; ds <= maxTrim; ds += step) {
-                const size = Math.min(rough.width - dx, rough.height - dy) - ds;
-                if (size < rough.width * 0.7) continue;
+    const minSize = Math.floor(size * 0.5);
+    const sizeSteps = 10;
+    const posSteps = 12;
 
-                const rect = {
-                    x: rough.x + dx,
-                    y: rough.y + dy,
-                    width: size,
-                    height: size,
-                };
+    for (let si = 0; si <= sizeSteps; si++) {
+        const s = Math.floor(minSize + (size - minSize) * si / sizeSteps);
+        const xRange = w - s;
+        const yRange = h - s;
 
-                const score = chessboardScore(pixels, imgW, rect);
+        for (let xi = 0; xi <= posSteps; xi++) {
+            for (let yi = 0; yi <= posSteps; yi++) {
+                const x = Math.floor(xRange * xi / posSteps);
+                const y = Math.floor(yRange * yi / posSteps);
+
+                const rect = { x, y, width: s, height: s };
+                const score = chessboardScore(pixels, w, rect);
+
                 if (score > bestScore) {
                     bestScore = score;
                     bestRect = rect;
@@ -224,6 +80,128 @@ function refineBoardRect(canvas, rough) {
     }
 
     return bestRect;
+}
+
+/**
+ * Refine rough board bounds by searching for the grid alignment that best
+ * matches the alternating light/dark chessboard pattern.
+ * Uses contrastScore as tiebreaker for pixel-level precision.
+ * @param {HTMLCanvasElement} canvas
+ * @param {{x: number, y: number, width: number, height: number}} rough
+ * @returns {{x: number, y: number, width: number, height: number}}
+ */
+function refineBoardRect(canvas, rough) {
+    const ctx = canvas.getContext('2d');
+    const pixels = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+    const imgW = canvas.width;
+    const imgH = canvas.height;
+
+    const nomTileW = rough.width / 8;
+    const nomTileH = rough.height / 8;
+    const halfTile = Math.floor(Math.min(nomTileW, nomTileH) / 2);
+
+    // Build horizontal gradient across the full image width (not just rough rect)
+    const hGrad = new Float32Array(imgW);
+    for (let row = 0; row < 8; row++) {
+        for (const frac of [0.1, 0.9]) {
+            const sy = Math.round(rough.y + (row + frac) * nomTileH);
+            if (sy < 0 || sy >= imgH) continue;
+            for (let x = 0; x < imgW - 1; x++) {
+                const idx1 = (sy * imgW + x) * 4;
+                const idx2 = (sy * imgW + x + 1) * 4;
+                const b1 = 0.299 * pixels[idx1] + 0.587 * pixels[idx1 + 1] + 0.114 * pixels[idx1 + 2];
+                const b2 = 0.299 * pixels[idx2] + 0.587 * pixels[idx2 + 1] + 0.114 * pixels[idx2 + 2];
+                hGrad[x] += Math.abs(b2 - b1);
+            }
+        }
+    }
+
+    // Search over offset AND tile size to find best horizontal alignment
+    // Grid lines at positions: offset + k * tw for k=1..7 (in image coordinates)
+    let bestHScore = -1;
+    let bestOffset = rough.x;
+    let bestTW = nomTileW;
+
+    const minTW = nomTileW * 0.85;
+    const maxTW = nomTileW * 1.15;
+    const twStep = 0.5;
+
+    for (let tw = minTW; tw <= maxTW; tw += twStep) {
+        const searchMin = Math.max(0, rough.x - halfTile);
+        const searchMax = Math.min(imgW - Math.round(8 * tw), rough.x + halfTile);
+        for (let off = searchMin; off <= searchMax; off++) {
+            let score = 0;
+            for (let k = 1; k <= 7; k++) {
+                const pos = Math.round(off + k * tw);
+                for (let d = -2; d <= 2; d++) {
+                    const p = pos + d;
+                    if (p >= 0 && p < imgW) score += hGrad[p];
+                }
+            }
+            if (score > bestHScore) {
+                bestHScore = score;
+                bestOffset = off;
+                bestTW = tw;
+            }
+        }
+    }
+
+    // Build vertical gradient across full image height
+    const vGrad = new Float32Array(imgH);
+    for (let col = 0; col < 8; col++) {
+        for (const frac of [0.1, 0.9]) {
+            const sx = Math.round(bestOffset + (col + frac) * bestTW);
+            if (sx < 0 || sx >= imgW) continue;
+            for (let y = 0; y < imgH - 1; y++) {
+                const idx1 = (y * imgW + sx) * 4;
+                const idx2 = ((y + 1) * imgW + sx) * 4;
+                const b1 = 0.299 * pixels[idx1] + 0.587 * pixels[idx1 + 1] + 0.114 * pixels[idx1 + 2];
+                const b2 = 0.299 * pixels[idx2] + 0.587 * pixels[idx2 + 1] + 0.114 * pixels[idx2 + 2];
+                vGrad[y] += Math.abs(b2 - b1);
+            }
+        }
+    }
+
+    // Search over offset AND tile size for vertical alignment
+    let bestVScore = -1;
+    let bestYOffset = rough.y;
+    let bestTH = nomTileH;
+
+    const minTH = nomTileH * 0.85;
+    const maxTH = nomTileH * 1.15;
+
+    for (let th = minTH; th <= maxTH; th += twStep) {
+        const searchMin = Math.max(0, rough.y - halfTile);
+        const searchMax = Math.min(imgH - Math.round(8 * th), rough.y + halfTile);
+        for (let off = searchMin; off <= searchMax; off++) {
+            let score = 0;
+            for (let k = 1; k <= 7; k++) {
+                const pos = Math.round(off + k * th);
+                for (let d = -2; d <= 2; d++) {
+                    const p = pos + d;
+                    if (p >= 0 && p < imgH) score += vGrad[p];
+                }
+            }
+            if (score > bestVScore) {
+                bestVScore = score;
+                bestYOffset = off;
+                bestTH = th;
+            }
+        }
+    }
+
+    const finalW = Math.round(8 * bestTW);
+    const finalH = Math.round(8 * bestTH);
+    const finalSize = Math.min(finalW, finalH);
+
+    const result = {
+        x: bestOffset,
+        y: bestYOffset,
+        width: finalSize,
+        height: finalSize,
+    };
+
+    return result;
 }
 
 /**

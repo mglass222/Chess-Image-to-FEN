@@ -1,53 +1,72 @@
-"""CNN model architecture for chess piece classification."""
+"""MobileNetV2-based chess piece classifier with built-in normalization."""
 
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from config import NUM_CLASSES, TILE_SIZE
+from config import NUM_CLASSES
 
-import tensorflow as tf
-from tensorflow import keras
-from tensorflow.keras import layers
+import torch
+import torch.nn as nn
+from torchvision.models import mobilenet_v2, MobileNet_V2_Weights
 
 
-def build_model(input_shape=(TILE_SIZE, TILE_SIZE, 3), num_classes=NUM_CLASSES):
-    """Build a small CNN for classifying chess piece tiles.
+class ChessPieceClassifier(nn.Module):
+    """MobileNetV2 fine-tuned for chess piece classification.
 
-    Architecture: 3 conv blocks (32->64->128), GlobalAvgPool, Dense head.
-    ~300K parameters, suitable for TensorFlow.js browser inference.
+    Accepts raw [0, 255] float32 input and normalizes internally,
+    so the browser can pass pixel values directly without preprocessing.
     """
-    model = keras.Sequential([
-        # Normalize pixel values to [0, 1]
-        layers.Rescaling(1.0 / 255, input_shape=input_shape),
 
-        # Block 1: 32 filters
-        layers.Conv2D(32, (3, 3), activation="relu", padding="same"),
-        layers.BatchNormalization(),
-        layers.Conv2D(32, (3, 3), activation="relu", padding="same"),
-        layers.MaxPooling2D((2, 2)),  # -> 25x25x32
+    def __init__(self, num_classes=NUM_CLASSES):
+        super().__init__()
 
-        # Block 2: 64 filters
-        layers.Conv2D(64, (3, 3), activation="relu", padding="same"),
-        layers.BatchNormalization(),
-        layers.Conv2D(64, (3, 3), activation="relu", padding="same"),
-        layers.MaxPooling2D((2, 2)),  # -> 12x12x64
+        # ImageNet normalization constants (baked into the model for ONNX export)
+        self.register_buffer(
+            "mean", torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1)
+        )
+        self.register_buffer(
+            "std", torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1)
+        )
 
-        # Block 3: 128 filters
-        layers.Conv2D(128, (3, 3), activation="relu", padding="same"),
-        layers.BatchNormalization(),
-        layers.MaxPooling2D((2, 2)),  # -> 6x6x128
+        # Load pretrained MobileNetV2 backbone
+        backbone = mobilenet_v2(weights=MobileNet_V2_Weights.IMAGENET1K_V1)
+        self.features = backbone.features
+        self.pool = nn.AdaptiveAvgPool2d(1)
 
-        # Classifier head
-        layers.GlobalAveragePooling2D(),  # -> 128
-        layers.Dense(128, activation="relu"),
-        layers.Dropout(0.3),
-        layers.Dense(num_classes, activation="softmax"),
-    ])
+        # Replace classifier head
+        self.classifier = nn.Sequential(
+            nn.Dropout(0.2),
+            nn.Linear(1280, num_classes),
+        )
 
-    return model
+    def forward(self, x):
+        # x: (N, 3, 224, 224) float32 in [0, 255]
+        x = x / 255.0
+        x = (x - self.mean) / self.std
+
+        x = self.features(x)
+        x = self.pool(x)
+        x = torch.flatten(x, 1)
+        x = self.classifier(x)
+        return x  # raw logits for CrossEntropyLoss
+
+
+class ChessPieceClassifierSoftmax(nn.Module):
+    """Wrapper that adds softmax for export (browser expects probabilities)."""
+
+    def __init__(self, base_model):
+        super().__init__()
+        self.model = base_model
+
+    def forward(self, x):
+        logits = self.model(x)
+        return torch.softmax(logits, dim=1)
 
 
 if __name__ == "__main__":
-    model = build_model()
-    model.summary()
+    model = ChessPieceClassifier()
+    print(f"Parameters: {sum(p.numel() for p in model.parameters()):,}")
+    dummy = torch.randn(1, 3, 224, 224)
+    out = model(dummy)
+    print(f"Output shape: {out.shape}")

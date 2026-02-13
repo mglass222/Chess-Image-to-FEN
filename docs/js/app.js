@@ -5,7 +5,7 @@
 import { loadModel, classifyBoard, isModelLoaded } from './classifier.js';
 import { buildFEN, detectOrientation } from './fenBuilder.js';
 import { detectAndSegment, getBoardRect } from './boardDetector.js';
-import { renderBoard } from './boardRenderer.js';
+import { renderBoard, preloadPieces } from './boardRenderer.js';
 
 // DOM elements
 const statusEl = document.getElementById('status');
@@ -37,7 +37,7 @@ async function init() {
     setStatus('Loading AI model...', '');
 
     try {
-        await loadModel();
+        await Promise.all([loadModel(), preloadPieces()]);
         setStatus('Ready! Drop a chess board screenshot.', 'ready');
     } catch (err) {
         setStatus(`Failed to load model: ${err.message}`, 'error');

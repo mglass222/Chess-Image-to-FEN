@@ -22,28 +22,46 @@ CLASS_NAMES = [
 ]
 NUM_CLASSES = len(CLASS_NAMES)
 
-# Piece set names to download from Lichess
+# Piece set names to download from Lichess (all 40 available sets)
 PIECE_SETS = [
-    "cburnett",
-    "merida",
+    "alpha",
+    "anarcandy",
+    "caliente",
     "california",
-    "staunty",
-    "kosal",
-    "tatiana",
-    "pirouetti",
+    "cardinal",
+    "cburnett",
+    "celtic",
+    "chess7",
     "chessnut",
+    "companion",
+    "cooke",
+    "disguised",
+    "dubrovny",
+    "fantasy",
+    "firi",
+    "fresca",
+    "gioco",
+    "governor",
     "horsey",
+    "icpieces",
+    "kiwen-suwi",
+    "kosal",
+    "leipzig",
     "letter",
     "maestro",
-    "fresca",
-    "cardinal",
-    "gioco",
-    "dubrovny",
-    "icpieces",
-    "libra",
-    "shapes",
-    "mono",
+    "merida",
+    "mpchess",
+    "pirouetti",
     "pixel",
+    "reillycraig",
+    "rhosgfx",
+    "riohacha",
+    "shahi-ivory-brown",
+    "shapes",
+    "spatial",
+    "staunty",
+    "tatiana",
+    "xkcd",
 ]
 
 # Piece file naming: color + piece type
@@ -64,14 +82,8 @@ BOARD_THEMES = [
     ("#fff8e1", "#ff8f00"),  # amber
 ]
 
-# Data generation settings
-NUM_BOARDS = 15000
-RANDOM_GAME_RATIO = 0.5      # 50% from random games
-RANDOM_PLACEMENT_RATIO = 0.3  # 30% from random piece placements
-ENDGAME_RATIO = 0.2           # 20% endgame-like positions
-
 # Training settings
-BATCH_SIZE = 64
+BATCH_SIZE = 96
 EPOCHS = 30
-LEARNING_RATE = 0.001
+LEARNING_RATE = 1e-4
 VALIDATION_SPLIT = 0.15

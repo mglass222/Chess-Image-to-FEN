@@ -1,56 +1,68 @@
-"""Generate synthetic chess board images and slice into labeled tiles.
+"""Generate training tiles: individual pieces on square backgrounds.
 
-Uses Pillow for board composition and svglib+reportlab for SVG piece rasterization.
-No native Cairo dependency required.
+For each piece set and board theme, render every piece on both light and dark
+squares.  Also generate empty square tiles.  No full-board rendering needed --
+the classifier just needs to learn what each piece looks like on a coloured
+background.
 """
 
 import io
-import random
 import sys
 from pathlib import Path
 
-import chess
-import numpy as np
-from PIL import Image, ImageDraw
+from PIL import Image
 from svglib.svglib import svg2rlg
 from reportlab.graphics import renderPM
 
 sys.path.insert(0, str(Path(__file__).parent))
 from config import (
-    BOARD_SIZE,
     BOARD_THEMES,
     CLASS_NAMES,
-    ENDGAME_RATIO,
-    NUM_BOARDS,
+    PIECE_COLORS,
     PIECE_SETS,
     PIECE_SETS_DIR,
-    RANDOM_GAME_RATIO,
-    RANDOM_PLACEMENT_RATIO,
+    PIECE_TYPES,
     TILE_SIZE,
     TILES_DIR,
 )
 
-# Cache for rasterized piece images: (set_name, color, piece) -> PIL.Image (RGBA)
-_piece_cache = {}
+# Cache SVG drawings so we only parse each SVG once
+_svg_cache = {}
 
+
+# ---------------------------------------------------------------------------
+# Piece SVG loading
+# ---------------------------------------------------------------------------
 
 def get_available_piece_sets():
-    """Return list of piece set names that have been downloaded."""
+    """Return list of piece set names that have been downloaded.
+
+    Skips sets whose SVGs use gradients, which svglib cannot render.
+    """
     available = []
     for name in PIECE_SETS:
         set_dir = PIECE_SETS_DIR / name
-        if set_dir.exists():
-            svgs = list(set_dir.glob("*.svg"))
-            if len(svgs) >= 12:
-                available.append(name)
+        if not set_dir.exists():
+            continue
+        svgs = list(set_dir.glob("*.svg"))
+        if len(svgs) < 12:
+            continue
+        # Skip sets with gradients (svglib renders them incorrectly)
+        has_gradient = any(
+            "Gradient" in svg.read_text(encoding="utf-8", errors="ignore")
+            for svg in svgs
+        )
+        if has_gradient:
+            continue
+        available.append(name)
     return available
 
 
-def load_piece_image(set_name, color, piece):
-    """Load a piece SVG and rasterize to a TILE_SIZE x TILE_SIZE RGBA PIL Image."""
+def _get_svg_drawing(set_name, color, piece):
+    """Parse and cache an SVG drawing, scaled to TILE_SIZE."""
     cache_key = (set_name, color, piece)
-    if cache_key in _piece_cache:
-        return _piece_cache[cache_key]
+    if cache_key in _svg_cache:
+        return _svg_cache[cache_key]
 
     filepath = PIECE_SETS_DIR / set_name / f"{color}{piece}.svg"
     if not filepath.exists():
@@ -61,205 +73,104 @@ def load_piece_image(set_name, color, piece):
         if drawing is None:
             return None
 
-        # Scale to tile size
         sx = TILE_SIZE / drawing.width
         sy = TILE_SIZE / drawing.height
         drawing.width = TILE_SIZE
         drawing.height = TILE_SIZE
         drawing.scale(sx, sy)
 
-        # Render to PNG bytes
-        png_data = renderPM.drawToString(drawing, fmt="PNG")
-        img = Image.open(io.BytesIO(png_data)).convert("RGBA")
-        img = img.resize((TILE_SIZE, TILE_SIZE), Image.LANCZOS)
-
-        _piece_cache[cache_key] = img
-        return img
+        _svg_cache[cache_key] = drawing
+        return drawing
     except Exception as e:
-        print(f"  Warning: could not rasterize {filepath.name}: {e}")
+        print(f"  Warning: could not parse {filepath.name}: {e}")
         return None
 
 
-def preload_piece_set(set_name):
-    """Pre-rasterize all pieces in a set to warm the cache."""
-    for color in ("w", "b"):
-        for piece in ("P", "N", "B", "R", "Q", "K"):
-            load_piece_image(set_name, color, piece)
+def render_piece_on_bg(drawing, bg_hex):
+    """Render a piece SVG drawing onto a coloured background, return RGB PIL Image."""
+    from copy import deepcopy
+    d = deepcopy(drawing)
 
-
-def generate_random_game_position(max_moves=120):
-    """Generate a position by playing random legal moves."""
-    board = chess.Board()
-    num_moves = random.randint(1, max_moves)
-    for _ in range(num_moves):
-        legal_moves = list(board.legal_moves)
-        if not legal_moves:
-            break
-        board.push(random.choice(legal_moves))
-    return board
-
-
-def generate_random_placement():
-    """Generate a random piece placement (may not be legal)."""
-    board = chess.Board.empty()
-
-    squares = random.sample(range(64), 2)
-    board.set_piece_at(squares[0], chess.Piece(chess.KING, chess.WHITE))
-    board.set_piece_at(squares[1], chess.Piece(chess.KING, chess.BLACK))
-
-    num_extra = random.randint(0, 14)
-    remaining_squares = [s for s in range(64) if s not in squares]
-    extra_squares = random.sample(
-        remaining_squares, min(num_extra, len(remaining_squares))
-    )
-
-    piece_types = [chess.PAWN, chess.KNIGHT, chess.BISHOP, chess.ROOK, chess.QUEEN]
-
-    for sq in extra_squares:
-        rank = chess.square_rank(sq)
-        if rank in (0, 7):
-            pt = random.choice(
-                [chess.KNIGHT, chess.BISHOP, chess.ROOK, chess.QUEEN]
-            )
-        else:
-            pt = random.choice(piece_types)
-        color = random.choice([chess.WHITE, chess.BLACK])
-        board.set_piece_at(sq, chess.Piece(pt, color))
-
-    return board
-
-
-def generate_endgame_position():
-    """Generate an endgame-like position with few pieces."""
-    board = chess.Board.empty()
-
-    squares = random.sample(range(64), 2)
-    board.set_piece_at(squares[0], chess.Piece(chess.KING, chess.WHITE))
-    board.set_piece_at(squares[1], chess.Piece(chess.KING, chess.BLACK))
-
-    num_extra = random.randint(1, 4)
-    remaining = [s for s in range(64) if s not in squares]
-    extra_squares = random.sample(remaining, min(num_extra, len(remaining)))
-
-    for sq in extra_squares:
-        rank = chess.square_rank(sq)
-        if rank in (0, 7):
-            pt = random.choice(
-                [chess.KNIGHT, chess.BISHOP, chess.ROOK, chess.QUEEN]
-            )
-        else:
-            pt = random.choice(
-                [chess.PAWN, chess.KNIGHT, chess.BISHOP, chess.ROOK, chess.QUEEN]
-            )
-        color = random.choice([chess.WHITE, chess.BLACK])
-        board.set_piece_at(sq, chess.Piece(pt, color))
-
-    return board
-
-
-def generate_positions(num_boards):
-    """Generate a mix of board positions."""
-    positions = []
-    n_random_game = int(num_boards * RANDOM_GAME_RATIO)
-    n_random_place = int(num_boards * RANDOM_PLACEMENT_RATIO)
-    n_endgame = num_boards - n_random_game - n_random_place
-
-    print(f"Generating {n_random_game} random game positions...")
-    for _ in range(n_random_game):
-        positions.append(generate_random_game_position())
-
-    print(f"Generating {n_random_place} random placement positions...")
-    for _ in range(n_random_place):
-        positions.append(generate_random_placement())
-
-    print(f"Generating {n_endgame} endgame positions...")
-    for _ in range(n_endgame):
-        positions.append(generate_endgame_position())
-
-    random.shuffle(positions)
-    return positions
-
-
-def render_board(board, piece_set, light_color, dark_color):
-    """Render a chess board as a PIL Image using Pillow compositing."""
-    img = Image.new("RGB", (BOARD_SIZE, BOARD_SIZE))
-    draw = ImageDraw.Draw(img)
-
-    # Draw squares
-    for rank in range(8):
-        for file in range(8):
-            x = file * TILE_SIZE
-            y = rank * TILE_SIZE
-            is_light = (rank + file) % 2 == 0
-            color = light_color if is_light else dark_color
-            draw.rectangle([x, y, x + TILE_SIZE - 1, y + TILE_SIZE - 1], fill=color)
-
-    # Place pieces
-    for rank in range(8):
-        for file in range(8):
-            chess_square = chess.square(file, 7 - rank)
-            piece = board.piece_at(chess_square)
-            if piece is not None:
-                pc = "w" if piece.color == chess.WHITE else "b"
-                piece_char = piece.symbol().upper()
-                piece_img = load_piece_image(piece_set, pc, piece_char)
-                if piece_img is not None:
-                    x = file * TILE_SIZE
-                    y = rank * TILE_SIZE
-                    # Paste with alpha mask for transparency
-                    img.paste(piece_img, (x, y), piece_img)
-
+    bg_int = int(bg_hex.lstrip("#"), 16)
+    png_data = renderPM.drawToString(d, fmt="PNG", bg=bg_int)
+    img = Image.open(io.BytesIO(png_data)).convert("RGB")
+    img = img.resize((TILE_SIZE, TILE_SIZE), Image.LANCZOS)
     return img
 
 
-def slice_board_to_tiles(board_image, board):
-    """Slice a board image into 64 labeled tiles."""
-    tiles = []
-    for rank in range(8):
-        for file in range(8):
-            x = file * TILE_SIZE
-            y = rank * TILE_SIZE
-            tile = board_image.crop((x, y, x + TILE_SIZE, y + TILE_SIZE))
-
-            chess_square = chess.square(file, 7 - rank)
-            piece = board.piece_at(chess_square)
-            if piece is None:
-                label = "empty"
-            else:
-                color = "w" if piece.color == chess.WHITE else "b"
-                label = f"{color}{piece.symbol().upper()}"
-
-            tiles.append((tile, label))
-    return tiles
+def make_empty_square(bg_hex):
+    """Create a solid-colour TILE_SIZE x TILE_SIZE RGB image."""
+    return Image.new("RGB", (TILE_SIZE, TILE_SIZE), bg_hex)
 
 
-def apply_augmentation(image):
-    """Apply light augmentation to a tile image."""
-    img_array = np.array(image, dtype=np.float32)
+# ---------------------------------------------------------------------------
+# Tile saving
+# ---------------------------------------------------------------------------
 
-    brightness = random.uniform(0.9, 1.1)
-    img_array = np.clip(img_array * brightness, 0, 255)
-
-    mean = img_array.mean()
-    contrast = random.uniform(0.9, 1.1)
-    img_array = np.clip((img_array - mean) * contrast + mean, 0, 255)
-
-    return Image.fromarray(img_array.astype(np.uint8))
-
-
-def save_tile(tile_image, label, index, augmented=False):
+def save_tile(tile_image, label, index):
     """Save a tile image to the appropriate class directory."""
     class_dir = TILES_DIR / label
     class_dir.mkdir(parents=True, exist_ok=True)
-    suffix = "_aug" if augmented else ""
-    filepath = class_dir / f"tile_{index:07d}{suffix}.png"
+    filepath = class_dir / f"tile_{index:07d}.png"
     tile_image.save(filepath)
 
 
-def generate_dataset(num_boards=None):
-    """Main entry point: generate the full training dataset."""
-    num_boards = num_boards or NUM_BOARDS
+# ---------------------------------------------------------------------------
+# Real board processing
+# ---------------------------------------------------------------------------
 
+REAL_BOARDS_DIR = Path(__file__).parent / "real_boards"
+
+_STARTING_LABELS = [
+    ["bR", "bN", "bB", "bQ", "bK", "bB", "bN", "bR"],
+    ["bP", "bP", "bP", "bP", "bP", "bP", "bP", "bP"],
+    ["empty"] * 8,
+    ["empty"] * 8,
+    ["empty"] * 8,
+    ["empty"] * 8,
+    ["wP", "wP", "wP", "wP", "wP", "wP", "wP", "wP"],
+    ["wR", "wN", "wB", "wQ", "wK", "wB", "wN", "wR"],
+]
+
+
+def process_real_boards(tile_counter):
+    """Slice real board screenshots into labelled tiles (starting position)."""
+    if not REAL_BOARDS_DIR.exists():
+        return tile_counter
+
+    images = list(REAL_BOARDS_DIR.glob("*.png")) + list(REAL_BOARDS_DIR.glob("*.jpg"))
+    if not images:
+        return tile_counter
+
+    board_size = TILE_SIZE * 8
+    print(f"\nProcessing {len(images)} real board screenshots...")
+    for img_path in images:
+        try:
+            img = Image.open(img_path).convert("RGB")
+            img = img.resize((board_size, board_size), Image.LANCZOS)
+
+            for rank in range(8):
+                for file in range(8):
+                    x = file * TILE_SIZE
+                    y = rank * TILE_SIZE
+                    tile = img.crop((x, y, x + TILE_SIZE, y + TILE_SIZE))
+                    label = _STARTING_LABELS[rank][file]
+                    save_tile(tile, label, tile_counter)
+                    tile_counter += 1
+
+            print(f"  Sliced {img_path.name}")
+        except Exception as e:
+            print(f"  Error processing {img_path.name}: {e}")
+
+    return tile_counter
+
+
+# ---------------------------------------------------------------------------
+# Main dataset generation
+# ---------------------------------------------------------------------------
+
+def generate_dataset():
+    """Generate training tiles: every piece x piece set x background colour."""
     available_sets = get_available_piece_sets()
     if not available_sets:
         print("No piece sets found! Run download_pieces.py first.")
@@ -268,46 +179,58 @@ def generate_dataset(num_boards=None):
 
     print(f"Found {len(available_sets)} piece sets: {', '.join(available_sets)}")
 
-    # Preload all piece sets
-    print("Pre-rasterizing piece SVGs...")
+    # Parse all piece SVGs
+    print("Parsing piece SVGs...")
     for s in available_sets:
-        preload_piece_set(s)
-    print(f"  Cached {len(_piece_cache)} piece images")
+        for color in PIECE_COLORS:
+            for piece in PIECE_TYPES:
+                _get_svg_drawing(s, color, piece)
+    print(f"  Cached {len(_svg_cache)} SVG drawings")
 
     # Create output directories
     for class_name in CLASS_NAMES:
         (TILES_DIR / class_name).mkdir(parents=True, exist_ok=True)
 
-    # Generate positions
-    positions = generate_positions(num_boards)
+    # Background colours: light and dark square from each theme
+    bg_colors = []
+    for light, dark in BOARD_THEMES:
+        bg_colors.append(light)
+        bg_colors.append(dark)
+
+    print(f"  {len(bg_colors)} background colours")
 
     tile_counter = 0
-    for i, board in enumerate(positions):
-        if (i + 1) % 500 == 0:
-            print(f"Processing board {i + 1}/{num_boards}...")
 
-        piece_set = random.choice(available_sets)
-        light_color, dark_color = random.choice(BOARD_THEMES)
+    # --- Piece tiles ---
+    total_piece_combos = len(available_sets) * 12 * len(bg_colors)
+    print(f"\nGenerating {total_piece_combos} piece tiles...")
 
-        try:
-            board_image = render_board(board, piece_set, light_color, dark_color)
-        except Exception as e:
-            print(f"  Error rendering board {i}: {e}")
-            continue
+    for set_name in available_sets:
+        for color in PIECE_COLORS:
+            for piece in PIECE_TYPES:
+                drawing = _get_svg_drawing(set_name, color, piece)
+                if drawing is None:
+                    continue
+                label = f"{color}{piece}"
+                for bg in bg_colors:
+                    tile = render_piece_on_bg(drawing, bg)
+                    save_tile(tile, label, tile_counter)
+                    tile_counter += 1
 
-        tiles = slice_board_to_tiles(board_image, board)
-        for tile_image, label in tiles:
-            save_tile(tile_image, label, tile_counter)
+    print(f"  Saved {tile_counter} piece tiles")
 
-            if random.random() < 0.3:
-                aug_tile = apply_augmentation(tile_image)
-                save_tile(aug_tile, label, tile_counter, augmented=True)
+    # --- Empty tiles ---
+    empty_before = tile_counter
+    for bg in bg_colors:
+        square = make_empty_square(bg)
+        save_tile(square, "empty", tile_counter)
+        tile_counter += 1
 
-            tile_counter += 1
+    print(f"  Saved {tile_counter - empty_before} empty tiles")
 
-    print(f"\nDone! Generated {tile_counter} tiles.")
+    # --- Summary ---
+    print(f"\nDone! Generated {tile_counter} tiles total.")
     print(f"Output directory: {TILES_DIR}")
-
     print("\nClass distribution:")
     for class_name in CLASS_NAMES:
         class_dir = TILES_DIR / class_name
@@ -317,13 +240,4 @@ def generate_dataset(num_boards=None):
 
 
 if __name__ == "__main__":
-    import argparse
-
-    parser = argparse.ArgumentParser(description="Generate chess training data")
-    parser.add_argument(
-        "-n", "--num-boards", type=int, default=NUM_BOARDS,
-        help=f"Number of boards to generate (default: {NUM_BOARDS})",
-    )
-    args = parser.parse_args()
-
-    generate_dataset(args.num_boards)
+    generate_dataset()
