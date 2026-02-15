@@ -46,9 +46,28 @@ function bestAlternative(probs, excludeSet) {
     return bestIdx;
 }
 
+// Hard piece limits per type (starting material, no promotion exceptions)
+const PIECE_LIMITS = [
+    // [classIndex, max, label]
+    [IDX_WK, 1, 'wK'], [IDX_BK, 1, 'bK'],
+    [IDX_WQ, 1, 'wQ'], [IDX_BQ, 1, 'bQ'],
+    [IDX_WR, 2, 'wR'], [IDX_BR, 2, 'bR'],
+    [IDX_WB, 2, 'wB'], [IDX_BB, 2, 'bB'],
+    [IDX_WN, 2, 'wN'], [IDX_BN, 2, 'bN'],
+    [IDX_WP, 8, 'wP'], [IDX_BP, 8, 'bP'],
+];
+
 /**
  * Validate and correct illegal positions on the board grid.
  * Modifies the board and probs arrays in place.
+ *
+ * Rules enforced (in order):
+ * 1. No pawns on ranks 1 or 8
+ * 2. Exactly 1 king per side (warn if missing)
+ * 3. Hard piece count limits: 1K, 1Q, 2R, 2B, 2N, 8P per side
+ *    Excess pieces (lowest confidence) get replaced with their best
+ *    alternative from the probability distribution.
+ *
  * @param {number[][]} board - 8x8 grid of class indices
  * @param {number[][][]} probs - 8x8 grid of probability arrays
  * @returns {string[]} warnings describing corrections made
@@ -64,76 +83,84 @@ function validateAndCorrect(board, probs) {
                 const oldName = CLASS_NAMES[cls];
                 const newIdx = bestAlternative(probs[rankIdx][file], ALL_PAWNS);
                 board[rankIdx][file] = newIdx;
-                const newName = CLASS_NAMES[newIdx];
-                warnings.push(`${oldName} on rank ${rankIdx === 0 ? 8 : 1} → ${newName}`);
+                warnings.push(`${oldName} on rank ${rankIdx === 0 ? 8 : 1} → ${CLASS_NAMES[newIdx]}`);
             }
         }
     }
 
-    // Rule 2: Exactly 1 king per side
-    for (const [kingSet, side] of [[WHITE_KINGS, 'w'], [BLACK_KINGS, 'b']]) {
-        const kingIdx = side === 'w' ? IDX_WK : IDX_BK;
-        const kings = [];
+    // Rule 2: Exactly 1 king per side — if missing, place one at the
+    // square with the highest king probability
+    for (const [kingIdx, side] of [[IDX_WK, 'w'], [IDX_BK, 'b']]) {
+        let found = false;
         for (let r = 0; r < 8; r++) {
             for (let f = 0; f < 8; f++) {
-                if (board[r][f] === kingIdx) {
-                    kings.push({ r, f, conf: probs[r][f][kingIdx] });
+                if (board[r][f] === kingIdx) { found = true; break; }
+            }
+            if (found) break;
+        }
+        if (!found) {
+            // Find the square with the highest probability for this king
+            let bestR = 0, bestF = 0, bestProb = -1;
+            for (let r = 0; r < 8; r++) {
+                for (let f = 0; f < 8; f++) {
+                    if (probs[r][f][kingIdx] > bestProb) {
+                        bestProb = probs[r][f][kingIdx];
+                        bestR = r;
+                        bestF = f;
+                    }
                 }
             }
+            const oldName = CLASS_NAMES[board[bestR][bestF]];
+            board[bestR][bestF] = kingIdx;
+            warnings.push(`missing ${side}K: ${oldName} → ${side}K`);
         }
-        if (kings.length > 1) {
-            // Keep highest confidence, replace others
-            kings.sort((a, b) => b.conf - a.conf);
-            for (let i = 1; i < kings.length; i++) {
-                const { r, f } = kings[i];
-                const newIdx = bestAlternative(probs[r][f], kingSet);
+    }
+
+    // Rule 3: Enforce hard piece limits per type
+    // Build a dynamic exclude set so demotions never create new violations.
+    // Re-run until stable (demoting one type can't overflow another).
+    let changed = true;
+    while (changed) {
+        changed = false;
+
+        // Count current pieces on the board
+        const pieceCounts = new Array(13).fill(0);
+        for (let r = 0; r < 8; r++) {
+            for (let f = 0; f < 8; f++) {
+                pieceCounts[board[r][f]]++;
+            }
+        }
+
+        // Build exclude set: all piece types currently at or above their limit
+        const atLimit = new Set();
+        for (const [pieceIdx, maxCount] of PIECE_LIMITS) {
+            if (pieceCounts[pieceIdx] >= maxCount) {
+                atLimit.add(pieceIdx);
+            }
+        }
+
+        for (const [pieceIdx, maxCount, label] of PIECE_LIMITS) {
+            if (pieceCounts[pieceIdx] <= maxCount) continue;
+
+            // Collect all squares with this piece
+            const squares = [];
+            for (let r = 0; r < 8; r++) {
+                for (let f = 0; f < 8; f++) {
+                    if (board[r][f] === pieceIdx) {
+                        squares.push({ r, f, conf: probs[r][f][pieceIdx] });
+                    }
+                }
+            }
+
+            // Keep the highest-confidence ones, demote the rest
+            squares.sort((a, b) => b.conf - a.conf);
+            for (let i = maxCount; i < squares.length; i++) {
+                const { r, f } = squares[i];
+                const newIdx = bestAlternative(probs[r][f], atLimit);
                 board[r][f] = newIdx;
-                warnings.push(`extra ${side}K → ${CLASS_NAMES[newIdx]}`);
+                warnings.push(`extra ${label} → ${CLASS_NAMES[newIdx]}`);
+                changed = true;
             }
-        } else if (kings.length === 0) {
-            warnings.push(`no ${side}K found`);
-        }
-    }
-
-    // Rule 3: Max 8 pawns per side
-    for (const [pawnIdx, side] of [[IDX_WP, 'w'], [IDX_BP, 'b']]) {
-        const pawnSet = side === 'w' ? WHITE_PAWNS : BLACK_PAWNS;
-        let pawns = [];
-        for (let r = 0; r < 8; r++) {
-            for (let f = 0; f < 8; f++) {
-                if (board[r][f] === pawnIdx) {
-                    pawns.push({ r, f, conf: probs[r][f][pawnIdx] });
-                }
-            }
-        }
-        while (pawns.length > 8) {
-            // Demote lowest-confidence pawn
-            pawns.sort((a, b) => a.conf - b.conf);
-            const { r, f } = pawns.shift();
-            const newIdx = bestAlternative(probs[r][f], pawnSet);
-            board[r][f] = newIdx;
-            warnings.push(`excess ${side}P → ${CLASS_NAMES[newIdx]}`);
-        }
-    }
-
-    // Rule 4: Max 15 non-king pieces per side (king + 15 = 16 total)
-    for (const [pieceSet, kingIdx, side] of [
-        [WHITE_PIECES, IDX_WK, 'w'],
-        [BLACK_PIECES, IDX_BK, 'b']
-    ]) {
-        let pieces = [];
-        for (let r = 0; r < 8; r++) {
-            for (let f = 0; f < 8; f++) {
-                if (pieceSet.has(board[r][f]) && board[r][f] !== kingIdx) {
-                    pieces.push({ r, f, cls: board[r][f], conf: probs[r][f][board[r][f]] });
-                }
-            }
-        }
-        while (pieces.length > 15) {
-            pieces.sort((a, b) => a.conf - b.conf);
-            const { r, f, cls } = pieces.shift();
-            board[r][f] = IDX_EMPTY;
-            warnings.push(`excess ${CLASS_NAMES[cls]} → empty`);
         }
     }
 

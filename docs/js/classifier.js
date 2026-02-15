@@ -79,16 +79,11 @@ export async function classifyBoard(tiles) {
     const output = results.output.data; // flat Float32Array [batchSize * numClasses]
     const numClasses = output.length / batchSize;
 
-    // Extract argmax, confidence, and full softmax probabilities per tile
+    // Extract argmax, confidence, and full probabilities per tile
+    // Note: model already outputs softmax probabilities (baked into ONNX export)
     return Array.from({ length: batchSize }, (_, i) => {
         const offset = i * numClasses;
-        const logits = Array.from({ length: numClasses }, (_, c) => output[offset + c]);
-
-        // Softmax for stable probabilities
-        const maxLogit = Math.max(...logits);
-        const exps = logits.map(l => Math.exp(l - maxLogit));
-        const sumExp = exps.reduce((a, b) => a + b, 0);
-        const probs = exps.map(e => e / sumExp);
+        const probs = Array.from({ length: numClasses }, (_, c) => output[offset + c]);
 
         let maxIdx = 0;
         let maxVal = probs[0];
