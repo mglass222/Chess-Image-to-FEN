@@ -37,11 +37,42 @@
                     <div id="original-image-container" class="image-container">
                         <canvas id="original-canvas"></canvas>
                     </div>
+                    <div id="grid-controls" class="grid-controls hidden">
+                        <p class="grid-hint">Drag edges to adjust the grid alignment</p>
+                        <div class="rotate-controls">
+                            <button id="rotate-ccw-btn" class="grid-btn small" title="Rotate -0.1°">-0.1°</button>
+                            <input type="number" id="rotate-angle" class="rotate-input" value="0" step="0.1" title="Rotation angle in degrees">
+                            <button id="rotate-cw-btn" class="grid-btn small" title="Rotate +0.1°">+0.1°</button>
+                            <button id="rotate-90-btn" class="grid-btn" title="Rotate 90° clockwise">90°</button>
+                        </div>
+                        <div class="grid-buttons">
+                            <button id="confirm-grid-btn" class="confirm-grid-btn">Confirm Grid</button>
+                        </div>
+                    </div>
                 </div>
                 <div class="result-panel">
                     <h3>Detected Position</h3>
                     <div id="preview-board" class="image-container">
                         <canvas id="preview-canvas" width="400" height="400"></canvas>
+                    </div>
+                    <div id="piece-palette" class="piece-palette hidden">
+                        <p class="palette-hint">Click a piece to remove it. Drag a piece from below onto the board to place it.</p>
+                        <div class="palette-row">
+                            <button class="palette-btn" data-piece="K" title="White King"></button>
+                            <button class="palette-btn" data-piece="Q" title="White Queen"></button>
+                            <button class="palette-btn" data-piece="R" title="White Rook"></button>
+                            <button class="palette-btn" data-piece="B" title="White Bishop"></button>
+                            <button class="palette-btn" data-piece="N" title="White Knight"></button>
+                            <button class="palette-btn" data-piece="P" title="White Pawn"></button>
+                        </div>
+                        <div class="palette-row">
+                            <button class="palette-btn" data-piece="k" title="Black King"></button>
+                            <button class="palette-btn" data-piece="q" title="Black Queen"></button>
+                            <button class="palette-btn" data-piece="r" title="Black Rook"></button>
+                            <button class="palette-btn" data-piece="b" title="Black Bishop"></button>
+                            <button class="palette-btn" data-piece="n" title="Black Knight"></button>
+                            <button class="palette-btn" data-piece="p" title="Black Pawn"></button>
+                        </div>
                     </div>
                 </div>
             </div>

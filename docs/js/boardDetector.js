@@ -530,6 +530,40 @@ function extractTiles(canvas, rect) {
 }
 
 /**
+ * Extract 64 tiles from an image using explicit grid line positions.
+ * Supports non-uniform tile sizes from manual grid adjustment.
+ * @param {HTMLImageElement} img
+ * @param {number[]} xLines - 9 x-positions (vertical lines, left to right)
+ * @param {number[]} yLines - 9 y-positions (horizontal lines, top to bottom)
+ * @returns {HTMLCanvasElement[]} Array of 64 tile canvases (top-left to bottom-right)
+ */
+export function extractTilesFromGrid(img, xLines, yLines) {
+    const canvas = document.createElement('canvas');
+    canvas.width = img.naturalWidth || img.width;
+    canvas.height = img.naturalHeight || img.height;
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    ctx.drawImage(img, 0, 0);
+
+    const tiles = [];
+    for (let rank = 0; rank < 8; rank++) {
+        for (let file = 0; file < 8; file++) {
+            const sx = xLines[file];
+            const sy = yLines[rank];
+            const sw = xLines[file + 1] - sx;
+            const sh = yLines[rank + 1] - sy;
+
+            const tileCanvas = document.createElement('canvas');
+            tileCanvas.width = 50;
+            tileCanvas.height = 50;
+            const tileCtx = tileCanvas.getContext('2d');
+            tileCtx.drawImage(canvas, sx, sy, sw, sh, 0, 0, 50, 50);
+            tiles.push(tileCanvas);
+        }
+    }
+    return tiles;
+}
+
+/**
  * Get the detected board rectangle (for overlay drawing).
  * @param {HTMLImageElement} img
  * @returns {{x: number, y: number, width: number, height: number}}
