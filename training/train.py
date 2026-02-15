@@ -1,4 +1,4 @@
-"""Train the ResNet-18 chess piece classifier (pure PyTorch)."""
+"""Train the MobileNetV2 chess piece classifier (pure PyTorch)."""
 
 import sys
 import time
