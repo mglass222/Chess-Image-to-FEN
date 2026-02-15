@@ -211,7 +211,7 @@ function drawOriginal(img, rect) {
 function updateFEN() {
     if (!currentPredictions) return;
 
-    const fen = buildFEN(currentPredictions, isFlipped);
+    const { fen, warnings } = buildFEN(currentPredictions, isFlipped);
     fenText.value = fen;
 
     // Update preview board
@@ -220,6 +220,11 @@ function updateFEN() {
     // Update Lichess link
     const fenEncoded = encodeURIComponent(fen);
     lichessLink.href = `https://lichess.org/analysis/${fenEncoded}`;
+
+    // Show warnings if any corrections were made
+    if (warnings.length > 0) {
+        setStatus(`Done! (fixed: ${warnings.join(', ')})`, 'ready');
+    }
 }
 
 // --- Controls ---

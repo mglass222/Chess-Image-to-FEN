@@ -1,4 +1,4 @@
-"""MobileNetV2-based chess piece classifier with built-in normalization."""
+"""ResNet-18-based chess piece classifier with built-in normalization."""
 
 import sys
 from pathlib import Path
@@ -8,11 +8,11 @@ from config import NUM_CLASSES
 
 import torch
 import torch.nn as nn
-from torchvision.models import mobilenet_v2, MobileNet_V2_Weights
+from torchvision.models import resnet18, ResNet18_Weights
 
 
 class ChessPieceClassifier(nn.Module):
-    """MobileNetV2 fine-tuned for chess piece classification.
+    """ResNet-18 fine-tuned for chess piece classification.
 
     Accepts raw [0, 255] float32 input and normalizes internally,
     so the browser can pass pixel values directly without preprocessing.
@@ -29,15 +29,24 @@ class ChessPieceClassifier(nn.Module):
             "std", torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1)
         )
 
-        # Load pretrained MobileNetV2 backbone
-        backbone = mobilenet_v2(weights=MobileNet_V2_Weights.IMAGENET1K_V1)
-        self.features = backbone.features
+        # Load pretrained ResNet-18 backbone (remove final FC layer)
+        backbone = resnet18(weights=ResNet18_Weights.IMAGENET1K_V1)
+        self.features = nn.Sequential(
+            backbone.conv1,
+            backbone.bn1,
+            backbone.relu,
+            backbone.maxpool,
+            backbone.layer1,
+            backbone.layer2,
+            backbone.layer3,
+            backbone.layer4,
+        )
         self.pool = nn.AdaptiveAvgPool2d(1)
 
-        # Replace classifier head
+        # Classifier head (ResNet-18 outputs 512 features)
         self.classifier = nn.Sequential(
             nn.Dropout(0.2),
-            nn.Linear(1280, num_classes),
+            nn.Linear(512, num_classes),
         )
 
     def forward(self, x):

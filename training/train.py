@@ -1,4 +1,4 @@
-"""Train the MobileNetV2 chess piece classifier (pure PyTorch)."""
+"""Train the ResNet-18 chess piece classifier (pure PyTorch)."""
 
 import sys
 import time
@@ -11,14 +11,15 @@ from config import (
     CLASS_NAMES,
     EPOCHS,
     LEARNING_RATE,
-    TILES_DIR,
+    TILES_SYNTHETIC_DIR,
+    TILES_CHESSCOM_DIR,
     VALIDATION_SPLIT,
 )
 from model import ChessPieceClassifier
 
 import torch
 import torch.nn as nn
-from torch.utils.data import DataLoader, random_split
+from torch.utils.data import ConcatDataset, DataLoader, WeightedRandomSampler, random_split
 from torchvision import transforms
 from torchvision.datasets import ImageFolder
 
@@ -60,61 +61,106 @@ class SubsetWithTransform(torch.utils.data.Dataset):
     def __init__(self, subset, transform):
         self.subset = subset
         self.transform = transform
+        # Pre-resolve (path, label) for each index to work with ConcatDataset
+        self._samples = []
+        dataset = subset.dataset
+        for i in subset.indices:
+            if isinstance(dataset, ConcatDataset):
+                # Walk ConcatDataset to find the right sub-dataset and local index
+                offset = 0
+                for ds in dataset.datasets:
+                    if i < offset + len(ds):
+                        path, label = ds.samples[i - offset]
+                        break
+                    offset += len(ds)
+                else:
+                    raise IndexError(f"Index {i} out of range for ConcatDataset")
+            else:
+                path, label = dataset.samples[i]
+            self._samples.append((path, label))
 
     def __len__(self):
-        return len(self.subset)
+        return len(self._samples)
 
     def __getitem__(self, idx):
-        img, label = self.subset.dataset.samples[self.subset.indices[idx]]
+        path, label = self._samples[idx]
         from PIL import Image
-        img = Image.open(img).convert("RGB")
+        img = Image.open(path).convert("RGB")
         if self.transform:
             img = self.transform(img)
         return img, label
 
 
-def load_datasets():
-    """Load and split the tile dataset into train/val with appropriate transforms."""
-    train_transform, val_transform = build_transforms()
-
-    # Load full dataset (transform=None, we'll apply per-split)
-    full_dataset = ImageFolder(str(TILES_DIR))
-
-    # ImageFolder sorts classes alphabetically. Remap to match our config order.
-    folder_classes = full_dataset.classes  # alphabetical
+def _remap_imagefolder(dataset):
+    """Remap ImageFolder labels from alphabetical order to CLASS_NAMES order."""
+    folder_classes = dataset.classes  # alphabetical
     assert set(folder_classes) == set(CLASS_NAMES), (
         f"ImageFolder classes {folder_classes} != config {CLASS_NAMES}"
     )
-    # Build remapping: folder_idx -> config_idx
     folder_to_config = {}
     for folder_idx, name in enumerate(folder_classes):
         folder_to_config[folder_idx] = CLASS_NAMES.index(name)
-    # Remap all sample labels
-    full_dataset.samples = [
-        (path, folder_to_config[label]) for path, label in full_dataset.samples
+    dataset.samples = [
+        (path, folder_to_config[label]) for path, label in dataset.samples
     ]
-    full_dataset.targets = [s[1] for s in full_dataset.samples]
-    full_dataset.classes = CLASS_NAMES
-    full_dataset.class_to_idx = {name: idx for idx, name in enumerate(CLASS_NAMES)}
+    dataset.targets = [s[1] for s in dataset.samples]
+    dataset.classes = CLASS_NAMES
+    dataset.class_to_idx = {name: idx for idx, name in enumerate(CLASS_NAMES)}
+
+
+def load_datasets():
+    """Load synthetic + chess.com tiles, combine with weighted sampling."""
+    train_transform, val_transform = build_transforms()
+
+    # Load both data sources
+    synthetic_ds = ImageFolder(str(TILES_SYNTHETIC_DIR))
+    chesscom_ds = ImageFolder(str(TILES_CHESSCOM_DIR))
+
+    _remap_imagefolder(synthetic_ds)
+    _remap_imagefolder(chesscom_ds)
+
+    n_synthetic = len(synthetic_ds)
+    n_chesscom = len(chesscom_ds)
+    print(f"Data sources: {n_synthetic} synthetic, {n_chesscom} chess.com")
+
+    # Concatenate into one dataset
+    combined = ConcatDataset([synthetic_ds, chesscom_ds])
+    n_total = len(combined)
 
     # Split into train/val
-    n_total = len(full_dataset)
     n_val = int(n_total * VALIDATION_SPLIT)
     n_train = n_total - n_val
 
     generator = torch.Generator().manual_seed(42)
-    train_subset, val_subset = random_split(full_dataset, [n_train, n_val], generator=generator)
+    train_subset, val_subset = random_split(combined, [n_train, n_val], generator=generator)
 
     train_dataset = SubsetWithTransform(train_subset, train_transform)
     val_dataset = SubsetWithTransform(val_subset, val_transform)
 
     print(f"Dataset: {n_total} total, {n_train} train, {n_val} val")
-    print(f"Classes: {full_dataset.classes}")
+
+    # Build per-sample weights for WeightedRandomSampler (training only).
+    # Samples from the smaller chess.com set get higher weight so both
+    # sources contribute equally per epoch.
+    sample_weights = []
+    w_synthetic = 1.0 / n_synthetic
+    w_chesscom = 1.0 / n_chesscom
+    for idx in train_subset.indices:
+        if idx < n_synthetic:
+            sample_weights.append(w_synthetic)
+        else:
+            sample_weights.append(w_chesscom)
+
+    sampler = WeightedRandomSampler(
+        weights=sample_weights,
+        num_samples=len(sample_weights),
+        replacement=True,
+    )
 
     train_loader = DataLoader(
         train_dataset,
         batch_size=BATCH_SIZE,
-        shuffle=True,
+        sampler=sampler,
         num_workers=4,
         pin_memory=True,
         persistent_workers=True,

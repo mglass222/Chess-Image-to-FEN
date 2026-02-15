@@ -6,7 +6,8 @@ from pathlib import Path
 ROOT_DIR = Path(__file__).parent
 PIECE_SETS_DIR = ROOT_DIR / "piece_sets"
 DATA_DIR = ROOT_DIR / "data"
-TILES_DIR = DATA_DIR / "tiles"
+TILES_SYNTHETIC_DIR = DATA_DIR / "tiles_synthetic"
+TILES_CHESSCOM_DIR = DATA_DIR / "tiles_chesscom"
 CHECKPOINTS_DIR = ROOT_DIR / "checkpoints"
 TFJS_MODEL_DIR = ROOT_DIR.parent / "docs" / "model"
 

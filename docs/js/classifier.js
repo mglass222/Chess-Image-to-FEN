@@ -79,17 +79,25 @@ export async function classifyBoard(tiles) {
     const output = results.output.data; // flat Float32Array [batchSize * numClasses]
     const numClasses = output.length / batchSize;
 
-    // Extract argmax and confidence per tile
+    // Extract argmax, confidence, and full softmax probabilities per tile
     return Array.from({ length: batchSize }, (_, i) => {
         const offset = i * numClasses;
+        const logits = Array.from({ length: numClasses }, (_, c) => output[offset + c]);
+
+        // Softmax for stable probabilities
+        const maxLogit = Math.max(...logits);
+        const exps = logits.map(l => Math.exp(l - maxLogit));
+        const sumExp = exps.reduce((a, b) => a + b, 0);
+        const probs = exps.map(e => e / sumExp);
+
         let maxIdx = 0;
-        let maxVal = output[offset];
+        let maxVal = probs[0];
         for (let c = 1; c < numClasses; c++) {
-            if (output[offset + c] > maxVal) {
-                maxVal = output[offset + c];
+            if (probs[c] > maxVal) {
+                maxVal = probs[c];
                 maxIdx = c;
             }
         }
-        return { classIndex: maxIdx, confidence: maxVal };
+        return { classIndex: maxIdx, confidence: maxVal, probs };
     });
 }
