@@ -22,6 +22,7 @@ const lichessLink = document.getElementById('lichess-link');
 const pasteBtn = document.getElementById('paste-btn');
 const gridControls = document.getElementById('grid-controls');
 const confirmGridBtn = document.getElementById('confirm-grid-btn');
+const resetGridBtn = document.getElementById('reset-grid-btn');
 const rotateCcwBtn = document.getElementById('rotate-ccw-btn');
 const rotateCwBtn = document.getElementById('rotate-cw-btn');
 const rotate90Btn = document.getElementById('rotate-90-btn');
@@ -300,6 +301,18 @@ flipBtn.addEventListener('click', () => {
     updateFEN();
 });
 
+resetGridBtn.addEventListener('click', () => {
+    if (!currentImg) return;
+    disableGridEditor();
+    const boardRect = getBoardRect(currentImg);
+    const scale = currentScale;
+    const w = Math.round((currentImg.naturalWidth || currentImg.width) * scale);
+    const h = Math.round((currentImg.naturalHeight || currentImg.height) * scale);
+    originalCanvas.width = w;
+    originalCanvas.height = h;
+    enableGridEditor(originalCanvas, currentImg, boardRect, scale, () => {});
+});
+
 confirmGridBtn.addEventListener('click', () => {
     confirmGrid().catch(err => {
         setStatus(`Error: ${err.message}`, 'error');
@@ -331,16 +344,75 @@ rotateAngleInput.addEventListener('change', () => {
 });
 
 /**
- * Rotate sourceImg by rotationDeg and re-run board detection + grid editor.
+ * Rotate sourceImg by rotationDeg. On first load, runs board detection.
+ * On subsequent rotations, transforms existing grid lines to match the new image.
  */
 async function applyRotationAndDetect() {
     if (!sourceImg) return;
 
     setStatus('Rotating...', 'processing');
+
+    // Capture current grid lines before disabling
+    const prevLines = currentImg ? getGridLines() : null;
+    const prevImgW = currentImg ? (currentImg.naturalWidth || currentImg.width) : 0;
+    const prevImgH = currentImg ? (currentImg.naturalHeight || currentImg.height) : 0;
+
     disableGridEditor();
 
     const rotated = await rotateImage(sourceImg, rotationDeg);
-    await processImage(rotated);
+
+    if (prevLines && prevImgW > 0) {
+        // Transform grid lines from old image coords to new image coords
+        const newImgW = rotated.naturalWidth || rotated.width;
+        const newImgH = rotated.naturalHeight || rotated.height;
+        const transformed = transformGridLines(
+            prevLines, prevImgW, prevImgH, newImgW, newImgH
+        );
+        await showGridEditor(rotated, transformed);
+    } else {
+        // First load — run board detection
+        await processImage(rotated);
+    }
+}
+
+/**
+ * Transform grid line positions when the image is re-rotated.
+ * Grid lines are defined relative to the image center, so we compute
+ * the offset shift caused by the bounding box size change.
+ */
+function transformGridLines(lines, oldW, oldH, newW, newH) {
+    const dx = (newW - oldW) / 2;
+    const dy = (newH - oldH) / 2;
+    return {
+        xLines: lines.xLines.map(x => x + dx),
+        yLines: lines.yLines.map(y => y + dy),
+    };
+}
+
+/**
+ * Show the grid editor on a rotated image with pre-existing grid lines.
+ * Skips board detection.
+ */
+async function showGridEditor(img, gridLines) {
+    const maxW = 700;
+    const scale = Math.min(maxW / img.width, maxW / img.height, 1);
+    const w = Math.round(img.width * scale);
+    const h = Math.round(img.height * scale);
+
+    originalCanvas.width = w;
+    originalCanvas.height = h;
+
+    currentImg = img;
+    currentScale = scale;
+
+    enableGridEditor(originalCanvas, img, null, scale, () => {}, gridLines);
+
+    gridControls.classList.remove('hidden');
+    piecePalette.classList.add('hidden');
+    previewCanvas.classList.remove('editable');
+    boardArray = null;
+    resultsEl.classList.remove('hidden');
+    setStatus('Adjust the grid if needed, then click Confirm.', 'ready');
 }
 
 /**

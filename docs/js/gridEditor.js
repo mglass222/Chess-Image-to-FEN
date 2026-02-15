@@ -27,8 +27,9 @@ let _listeners = {};
  * @param {{x: number, y: number, width: number, height: number}} rect - in image coords
  * @param {number} scale - display scale factor (display = image * scale)
  * @param {function} onChange - called with { xLines: number[], yLines: number[] } on each drag
+ * @param {{xLines: number[], yLines: number[]}} [gridLines] - optional pre-existing lines (overrides rect)
  */
-export function enableGridEditor(canvas, img, rect, scale, onChange) {
+export function enableGridEditor(canvas, img, rect, scale, onChange, gridLines) {
     _canvas = canvas;
     _ctx = canvas.getContext('2d');
     _img = img;
@@ -36,12 +37,17 @@ export function enableGridEditor(canvas, img, rect, scale, onChange) {
     _onChange = onChange;
     _dragging = null;
 
-    // Initialize 9 evenly spaced lines from the rect
-    _xLines = [];
-    _yLines = [];
-    for (let i = 0; i <= 8; i++) {
-        _xLines.push(rect.x + (rect.width / 8) * i);
-        _yLines.push(rect.y + (rect.height / 8) * i);
+    if (gridLines) {
+        _xLines = [...gridLines.xLines];
+        _yLines = [...gridLines.yLines];
+    } else {
+        // Initialize 9 evenly spaced lines from the rect
+        _xLines = [];
+        _yLines = [];
+        for (let i = 0; i <= 8; i++) {
+            _xLines.push(rect.x + (rect.width / 8) * i);
+            _yLines.push(rect.y + (rect.height / 8) * i);
+        }
     }
 
     _listeners.mousedown = onMouseDown;
@@ -97,8 +103,9 @@ export function getGridLines() {
 // --- Hit testing ---
 
 /**
- * Find the closest draggable line to the given display coordinates.
- * @returns {{ axis: 'x'|'y', index: number } | null}
+ * Find the closest draggable element to the given display coordinates.
+ * Corners (intersections of outer edges) take priority over lines.
+ * @returns {{ axis: 'x'|'y'|'corner', index?: number, xi?: number, yi?: number } | null}
  */
 function hitTest(displayX, displayY) {
     const top = _yLines[0] * _scale;
@@ -106,6 +113,26 @@ function hitTest(displayX, displayY) {
     const left = _xLines[0] * _scale;
     const right = _xLines[8] * _scale;
 
+    // Check corners first (all 4 outer corners)
+    const cornerThreshold = HIT_THRESHOLD * 1.5;
+    const corners = [
+        { xi: 0, yi: 0 }, { xi: 8, yi: 0 },
+        { xi: 0, yi: 8 }, { xi: 8, yi: 8 },
+    ];
+    let bestCorner = null;
+    let bestCornerDist = cornerThreshold + 1;
+    for (const c of corners) {
+        const cx = _xLines[c.xi] * _scale;
+        const cy = _yLines[c.yi] * _scale;
+        const dist = Math.sqrt((displayX - cx) ** 2 + (displayY - cy) ** 2);
+        if (dist < bestCornerDist) {
+            bestCornerDist = dist;
+            bestCorner = { axis: 'corner', xi: c.xi, yi: c.yi };
+        }
+    }
+    if (bestCorner) return bestCorner;
+
+    // Test lines
     let best = null;
     let bestDist = HIT_THRESHOLD + 1;
 
@@ -138,6 +165,10 @@ function hitTest(displayX, displayY) {
 
 function getCursorForHit(hit) {
     if (!hit) return '';
+    if (hit.axis === 'corner') {
+        if ((hit.xi === 0 && hit.yi === 0) || (hit.xi === 8 && hit.yi === 8)) return 'nwse-resize';
+        return 'nesw-resize';
+    }
     return hit.axis === 'x' ? 'ew-resize' : 'ns-resize';
 }
 
@@ -224,14 +255,23 @@ function onTouchEnd() {
 function applyDrag(hit, displayPos) {
     const imgW = _img.naturalWidth || _img.width;
     const imgH = _img.naturalHeight || _img.height;
+    const imgX = displayPos.x / _scale;
+    const imgY = displayPos.y / _scale;
 
-    if (hit.axis === 'x') {
-        const imgX = displayPos.x / _scale;
+    if (hit.axis === 'corner') {
+        // Move both edges at once
+        const xLo = hit.xi === 0 ? 0 : _xLines[hit.xi - 1] + MIN_GAP;
+        const xHi = hit.xi === 8 ? imgW : _xLines[hit.xi + 1] - MIN_GAP;
+        _xLines[hit.xi] = Math.max(xLo, Math.min(xHi, imgX));
+
+        const yLo = hit.yi === 0 ? 0 : _yLines[hit.yi - 1] + MIN_GAP;
+        const yHi = hit.yi === 8 ? imgH : _yLines[hit.yi + 1] - MIN_GAP;
+        _yLines[hit.yi] = Math.max(yLo, Math.min(yHi, imgY));
+    } else if (hit.axis === 'x') {
         const lo = hit.index === 0 ? 0 : _xLines[hit.index - 1] + MIN_GAP;
         const hi = hit.index === 8 ? imgW : _xLines[hit.index + 1] - MIN_GAP;
         _xLines[hit.index] = Math.max(lo, Math.min(hi, imgX));
     } else {
-        const imgY = displayPos.y / _scale;
         const lo = hit.index === 0 ? 0 : _yLines[hit.index - 1] + MIN_GAP;
         const hi = hit.index === 8 ? imgH : _yLines[hit.index + 1] - MIN_GAP;
         _yLines[hit.index] = Math.max(lo, Math.min(hi, imgY));
@@ -286,21 +326,15 @@ function redraw() {
         _ctx.stroke();
     }
 
-    // Draw drag handles at midpoints of each line
-    const hs = 10; // handle size
+    // Draw handles at all grid intersections
     _ctx.fillStyle = '#6c63ff';
-
-    // Vertical line handles (at vertical midpoint of the grid)
-    const midY = (top + bottom) / 2;
-    for (let i = 0; i <= 8; i++) {
-        const x = _xLines[i] * _scale;
-        _ctx.fillRect(x - hs / 2, midY - hs / 2, hs, hs);
-    }
-
-    // Horizontal line handles (at horizontal midpoint of the grid)
-    const midX = (left + right) / 2;
-    for (let i = 0; i <= 8; i++) {
-        const y = _yLines[i] * _scale;
-        _ctx.fillRect(midX - hs / 2, y - hs / 2, hs, hs);
+    for (let xi = 0; xi <= 8; xi++) {
+        const x = _xLines[xi] * _scale;
+        for (let yi = 0; yi <= 8; yi++) {
+            const y = _yLines[yi] * _scale;
+            const isCorner = (xi === 0 || xi === 8) && (yi === 0 || yi === 8);
+            const hs = isCorner ? 10 : 6;
+            _ctx.fillRect(x - hs / 2, y - hs / 2, hs, hs);
+        }
     }
 }
