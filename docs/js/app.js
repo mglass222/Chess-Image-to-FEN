@@ -28,6 +28,7 @@ const rotateCwBtn = document.getElementById('rotate-cw-btn');
 const rotate90Btn = document.getElementById('rotate-90-btn');
 const rotateAngleInput = document.getElementById('rotate-angle');
 const showGridBtn = document.getElementById('show-grid-btn');
+const sideBtn = document.getElementById('side-btn');
 const piecePalette = document.getElementById('piece-palette');
 const paletteBtns = document.querySelectorAll('.palette-btn');
 
@@ -51,6 +52,7 @@ const CLASS_INDEX_COLORS = {
 // State
 let currentPredictions = null;
 let isFlipped = false;
+let sideToMove = 'w';
 let sourceImg = null;   // original uploaded image (never modified)
 let currentImg = null;  // rotated version used by grid editor
 let currentScale = 1;
@@ -260,14 +262,15 @@ function drawPieceOverlays(ctx, xLines, yLines, scale) {
 function updateFEN() {
     if (!currentPredictions) return;
 
-    const { fen, warnings } = buildFEN(currentPredictions, isFlipped);
+    const { fen: rawFen, warnings } = buildFEN(currentPredictions, isFlipped);
+    const fen = rawFen.replace(/ w /, ` ${sideToMove} `);
     fenText.value = fen;
 
     // Update preview board
     renderBoard(previewCanvas, fen, boardSize);
 
     // Update Lichess link
-    lichessLink.href = `https://lichess.org/analysis/${fen.replaceAll(' ', '_')}`;
+    lichessLink.href = `https://lichess.org/analysis/${fen.replaceAll(' ', '_')}?color=white`;
 
     // Show warnings if any corrections were made
     if (warnings.length > 0) {
@@ -293,6 +296,12 @@ copyBtn.addEventListener('click', async () => {
 
 flipBtn.addEventListener('click', () => {
     isFlipped = !isFlipped;
+    updateFEN();
+});
+
+sideBtn.addEventListener('click', () => {
+    sideToMove = sideToMove === 'w' ? 'b' : 'w';
+    sideBtn.textContent = sideToMove === 'w' ? 'White to Move' : 'Black to Move';
     updateFEN();
 });
 
@@ -494,7 +503,7 @@ function boardToFen(board) {
         if (empty > 0) rankStr += empty;
         ranks.push(rankStr);
     }
-    return ranks.join('/') + ' w KQkq - 0 1';
+    return ranks.join('/') + ` ${sideToMove} KQkq - 0 1`;
 }
 
 // --- Palette: drag pieces onto the board ---
@@ -554,7 +563,7 @@ function refreshBoardDisplay() {
     const fen = boardToFen(boardArray);
     fenText.value = fen;
     renderBoard(previewCanvas, fen, boardSize);
-    lichessLink.href = `https://lichess.org/analysis/${fen.replaceAll(' ', '_')}`;
+    lichessLink.href = `https://lichess.org/analysis/${fen.replaceAll(' ', '_')}?color=white`;
 }
 
 // --- Start ---
