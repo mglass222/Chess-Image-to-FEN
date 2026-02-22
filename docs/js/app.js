@@ -271,8 +271,7 @@ function updateFEN() {
     renderBoard(previewCanvas, fen);
 
     // Update Lichess link
-    const fenEncoded = encodeURIComponent(fen);
-    lichessLink.href = `https://lichess.org/analysis/${fenEncoded}`;
+    lichessLink.href = `https://lichess.org/analysis/${fen.replaceAll(' ', '_')}`;
 
     // Show warnings if any corrections were made
     if (warnings.length > 0) {
@@ -551,8 +550,7 @@ function refreshBoardDisplay() {
     const fen = boardToFen(boardArray);
     fenText.value = fen;
     renderBoard(previewCanvas, fen);
-    const fenEncoded = encodeURIComponent(fen);
-    lichessLink.href = `https://lichess.org/analysis/${fenEncoded}`;
+    lichessLink.href = `https://lichess.org/analysis/${fen.replaceAll(' ', '_')}`;
 }
 
 // --- Start ---
