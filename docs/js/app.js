@@ -6,7 +6,7 @@ import { loadModel, classifyBoard, isModelLoaded } from './classifier.js';
 import { buildFEN, detectOrientation } from './fenBuilder.js';
 import { getBoardRect, extractTilesFromGrid } from './boardDetector.js';
 import { renderBoard, preloadPieces } from './boardRenderer.js';
-import { enableGridEditor, disableGridEditor, getGridLines } from './gridEditor.js';
+import { enableGridEditor, disableGridEditor, getGridLines, setOverlayCallback, setGridVisible } from './gridEditor.js';
 
 // DOM elements
 const statusEl = document.getElementById('status');
@@ -27,8 +27,26 @@ const rotateCcwBtn = document.getElementById('rotate-ccw-btn');
 const rotateCwBtn = document.getElementById('rotate-cw-btn');
 const rotate90Btn = document.getElementById('rotate-90-btn');
 const rotateAngleInput = document.getElementById('rotate-angle');
+const showGridBtn = document.getElementById('show-grid-btn');
 const piecePalette = document.getElementById('piece-palette');
 const paletteBtns = document.querySelectorAll('.palette-btn');
+
+// Class index to overlay color (both white and black pieces of same type share color)
+const CLASS_INDEX_COLORS = {
+    0: null,                          // empty
+    1: 'rgba(0, 128, 0, 0.8)',        // wP - green
+    2: 'rgba(100, 149, 255, 0.8)',    // wN - light blue
+    3: 'rgba(255, 255, 0, 0.8)',      // wB - yellow
+    4: 'rgba(200, 120, 0, 0.8)',      // wR - dark orange
+    5: 'rgba(128, 0, 128, 0.8)',      // wQ - purple
+    6: 'rgba(255, 0, 0, 0.8)',        // wK - red
+    7: 'rgba(0, 128, 0, 0.8)',        // bP - green
+    8: 'rgba(100, 149, 255, 0.8)',    // bN - light blue
+    9: 'rgba(255, 255, 0, 0.8)',      // bB - yellow
+    10: 'rgba(200, 120, 0, 0.8)',     // bR - dark orange
+    11: 'rgba(128, 0, 128, 0.8)',     // bQ - purple
+    12: 'rgba(255, 0, 0, 0.8)',       // bK - red
+};
 
 // State
 let currentPredictions = null;
@@ -218,6 +236,27 @@ async function runClassification() {
     setStatus('Done! Adjust grid and click Re-detect if needed.', 'ready');
 }
 
+/**
+ * Draw semi-transparent color overlays on the original image grid squares
+ * based on classified piece types.
+ */
+function drawPieceOverlays(ctx, xLines, yLines, scale) {
+    if (!currentPredictions) return;
+    for (let i = 0; i < 64; i++) {
+        const color = CLASS_INDEX_COLORS[currentPredictions[i].classIndex];
+        if (!color) continue;
+        const col = i % 8;
+        const row = Math.floor(i / 8);
+        const x = xLines[col] * scale;
+        const y = yLines[row] * scale;
+        const w = xLines[col + 1] * scale - x;
+        const h = yLines[row + 1] * scale - y;
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 5;
+        ctx.strokeRect(x + 2.5, y + 2.5, w - 5, h - 5);
+    }
+}
+
 function updateFEN() {
     if (!currentPredictions) return;
 
@@ -255,6 +294,13 @@ copyBtn.addEventListener('click', async () => {
 flipBtn.addEventListener('click', () => {
     isFlipped = !isFlipped;
     updateFEN();
+});
+
+let gridVisible = false;
+showGridBtn.addEventListener('click', () => {
+    gridVisible = !gridVisible;
+    showGridBtn.textContent = gridVisible ? 'Hide Grid' : 'Show Grid';
+    setGridVisible(gridVisible);
 });
 
 resetGridBtn.addEventListener('click', () => {
@@ -306,7 +352,7 @@ rotateAngleInput.addEventListener('change', () => {
 async function applyRotationAndDetect() {
     if (!sourceImg) return;
 
-    setStatus('Rotating...', 'processing');
+    setStatus('Analyzing...', 'processing');
 
     // Capture current grid lines before disabling
     const prevLines = currentImg ? getGridLines() : null;

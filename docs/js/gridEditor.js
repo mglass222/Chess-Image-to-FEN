@@ -15,6 +15,8 @@ let _xLines = null; // 9 x-positions in image coords (vertical lines, left to ri
 let _yLines = null; // 9 y-positions in image coords (horizontal lines, top to bottom)
 let _scale = 1;
 let _onChange = null;
+let _overlayCallback = null;
+let _gridVisible = false;
 
 // Drag state: { axis: 'x'|'y', index: 0-8 } or null
 let _dragging = null;
@@ -90,6 +92,8 @@ export function disableGridEditor() {
     _listeners = {};
     _canvas = null;
     _dragging = null;
+    _overlayCallback = null;
+    _gridVisible = false;
 }
 
 /**
@@ -98,6 +102,25 @@ export function disableGridEditor() {
  */
 export function getGridLines() {
     return { xLines: [..._xLines], yLines: [..._yLines] };
+}
+
+/**
+ * Set a callback to draw overlays on each redraw.
+ * Called with (ctx, xLines, yLines, scale) after grid lines but before handles.
+ * Pass null to clear.
+ */
+export function setOverlayCallback(fn) {
+    _overlayCallback = fn;
+    if (_canvas) redraw();
+}
+
+/**
+ * Toggle grid lines and handles visibility.
+ * When hidden, overlays are shown instead; when visible, overlays are hidden.
+ */
+export function setGridVisible(visible) {
+    _gridVisible = visible;
+    if (_canvas) redraw();
 }
 
 // --- Hit testing ---
@@ -294,47 +317,52 @@ function redraw() {
     const top = _yLines[0] * _scale;
     const bottom = _yLines[8] * _scale;
 
-    // Dim area outside the grid
-    _ctx.fillStyle = 'rgba(0, 0, 0, 0.4)';
-    _ctx.fillRect(0, 0, w, top);                              // top
-    _ctx.fillRect(0, bottom, w, h - bottom);                   // bottom
-    _ctx.fillRect(0, top, left, bottom - top);                 // left
-    _ctx.fillRect(right, top, w - right, bottom - top);        // right
+    if (_gridVisible) {
+        // Dim area outside the grid
+        _ctx.fillStyle = 'rgba(0, 0, 0, 0.4)';
+        _ctx.fillRect(0, 0, w, top);                              // top
+        _ctx.fillRect(0, bottom, w, h - bottom);                   // bottom
+        _ctx.fillRect(0, top, left, bottom - top);                 // left
+        _ctx.fillRect(right, top, w - right, bottom - top);        // right
 
-    // Draw outer border
-    _ctx.strokeStyle = '#6c63ff';
-    _ctx.lineWidth = 3;
-    _ctx.strokeRect(left, top, right - left, bottom - top);
+        // Draw outer border
+        _ctx.strokeStyle = '#6c63ff';
+        _ctx.lineWidth = 5;
+        _ctx.strokeRect(left, top, right - left, bottom - top);
 
-    // Draw internal vertical lines
-    _ctx.strokeStyle = 'rgba(108, 99, 255, 0.7)';
-    _ctx.lineWidth = 2;
-    for (let i = 1; i <= 7; i++) {
-        const x = _xLines[i] * _scale;
-        _ctx.beginPath();
-        _ctx.moveTo(x, top);
-        _ctx.lineTo(x, bottom);
-        _ctx.stroke();
-    }
-
-    // Draw internal horizontal lines
-    for (let i = 1; i <= 7; i++) {
-        const y = _yLines[i] * _scale;
-        _ctx.beginPath();
-        _ctx.moveTo(left, y);
-        _ctx.lineTo(right, y);
-        _ctx.stroke();
-    }
-
-    // Draw handles at all grid intersections
-    _ctx.fillStyle = '#6c63ff';
-    for (let xi = 0; xi <= 8; xi++) {
-        const x = _xLines[xi] * _scale;
-        for (let yi = 0; yi <= 8; yi++) {
-            const y = _yLines[yi] * _scale;
-            const isCorner = (xi === 0 || xi === 8) && (yi === 0 || yi === 8);
-            const hs = isCorner ? 10 : 6;
-            _ctx.fillRect(x - hs / 2, y - hs / 2, hs, hs);
+        // Draw internal vertical lines
+        _ctx.strokeStyle = 'rgba(108, 99, 255, 0.7)';
+        _ctx.lineWidth = 3;
+        for (let i = 1; i <= 7; i++) {
+            const x = _xLines[i] * _scale;
+            _ctx.beginPath();
+            _ctx.moveTo(x, top);
+            _ctx.lineTo(x, bottom);
+            _ctx.stroke();
         }
+
+        // Draw internal horizontal lines
+        for (let i = 1; i <= 7; i++) {
+            const y = _yLines[i] * _scale;
+            _ctx.beginPath();
+            _ctx.moveTo(left, y);
+            _ctx.lineTo(right, y);
+            _ctx.stroke();
+        }
+
+        // Draw handles at all grid intersections
+        _ctx.fillStyle = '#6c63ff';
+        for (let xi = 0; xi <= 8; xi++) {
+            const x = _xLines[xi] * _scale;
+            for (let yi = 0; yi <= 8; yi++) {
+                const y = _yLines[yi] * _scale;
+                const isCorner = (xi === 0 || xi === 8) && (yi === 0 || yi === 8);
+                const hs = isCorner ? 10 : 6;
+                _ctx.fillRect(x - hs / 2, y - hs / 2, hs, hs);
+            }
+        }
+    } else {
+        // Draw piece overlays when grid is hidden
+        if (_overlayCallback) _overlayCallback(_ctx, _xLines, _yLines, _scale);
     }
 }
