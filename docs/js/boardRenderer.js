@@ -5,8 +5,7 @@
 
 const LIGHT_COLOR = '#f0d9b5';
 const DARK_COLOR = '#b58863';
-const SQUARE_SIZE = 50;
-const BOARD_PX = SQUARE_SIZE * 8;
+const DEFAULT_BOARD_PX = 400;
 
 // Map FEN characters to piece image filenames
 const PIECE_FILES = {
@@ -39,12 +38,15 @@ export function preloadPieces() {
 
 /**
  * Render a FEN position onto a canvas element.
- * @param {HTMLCanvasElement} canvas - Target canvas (should be 400x400)
+ * @param {HTMLCanvasElement} canvas - Target canvas
  * @param {string} fen - FEN string
+ * @param {number} [boardPx] - Total board size in pixels (default 400)
  */
-export function renderBoard(canvas, fen) {
-    canvas.width = BOARD_PX;
-    canvas.height = BOARD_PX;
+export function renderBoard(canvas, fen, boardPx) {
+    const size = boardPx || DEFAULT_BOARD_PX;
+    const sq = size / 8;
+    canvas.width = size;
+    canvas.height = size;
     const ctx = canvas.getContext('2d');
 
     // Parse FEN piece placement (first field only)
@@ -61,20 +63,20 @@ export function renderBoard(canvas, fen) {
                 // Empty squares
                 const count = parseInt(ch);
                 for (let i = 0; i < count; i++) {
-                    drawSquare(ctx, file, rank);
+                    drawSquare(ctx, file, rank, sq);
                     file++;
                 }
             } else {
                 // Piece
-                drawSquare(ctx, file, rank);
-                drawPiece(ctx, file, rank, ch);
+                drawSquare(ctx, file, rank, sq);
+                drawPiece(ctx, file, rank, ch, sq);
                 file++;
             }
         }
 
         // Fill remaining squares if rank string was short
         while (file < 8) {
-            drawSquare(ctx, file, rank);
+            drawSquare(ctx, file, rank, sq);
             file++;
         }
     }
@@ -82,23 +84,23 @@ export function renderBoard(canvas, fen) {
     // Draw grid lines for clarity
     ctx.strokeStyle = '#333';
     ctx.lineWidth = 0.5;
-    ctx.strokeRect(0, 0, BOARD_PX, BOARD_PX);
+    ctx.strokeRect(0, 0, size, size);
 }
 
-function drawSquare(ctx, file, rank) {
+function drawSquare(ctx, file, rank, sq) {
     const isLight = (file + rank) % 2 === 0;
     ctx.fillStyle = isLight ? LIGHT_COLOR : DARK_COLOR;
-    ctx.fillRect(file * SQUARE_SIZE, rank * SQUARE_SIZE, SQUARE_SIZE, SQUARE_SIZE);
+    ctx.fillRect(file * sq, rank * sq, sq, sq);
 }
 
-function drawPiece(ctx, file, rank, piece) {
-    const x = file * SQUARE_SIZE;
-    const y = rank * SQUARE_SIZE;
+function drawPiece(ctx, file, rank, piece, sq) {
+    const x = file * sq;
+    const y = rank * sq;
 
     // Use SVG image if loaded
     const img = pieceImages[piece];
     if (img) {
-        ctx.drawImage(img, x, y, SQUARE_SIZE, SQUARE_SIZE);
+        ctx.drawImage(img, x, y, sq, sq);
         return;
     }
 
@@ -110,9 +112,9 @@ function drawPiece(ctx, file, rank, piece) {
     const unicode = PIECE_UNICODE[piece];
     if (!unicode) return;
 
-    const cx = x + SQUARE_SIZE / 2;
-    const cy = y + SQUARE_SIZE / 2;
-    ctx.font = `${SQUARE_SIZE * 0.8}px serif`;
+    const cx = x + sq / 2;
+    const cy = y + sq / 2;
+    ctx.font = `${sq * 0.8}px serif`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillStyle = 'rgba(0, 0, 0, 0.3)';

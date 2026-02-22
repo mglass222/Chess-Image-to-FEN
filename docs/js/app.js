@@ -21,7 +21,7 @@ const flipBtn = document.getElementById('flip-btn');
 const lichessLink = document.getElementById('lichess-link');
 const pasteBtn = document.getElementById('paste-btn');
 const gridControls = document.getElementById('grid-controls');
-const confirmGridBtn = document.getElementById('confirm-grid-btn');
+const redetectBtn = document.getElementById('redetect-btn');
 const resetGridBtn = document.getElementById('reset-grid-btn');
 const rotateCcwBtn = document.getElementById('rotate-ccw-btn');
 const rotateCwBtn = document.getElementById('rotate-cw-btn');
@@ -38,6 +38,7 @@ let currentImg = null;  // rotated version used by grid editor
 let currentScale = 1;
 let rotationDeg = 0;
 let boardArray = null;  // 8x8 array of FEN chars (or '' for empty), set after confirm
+let boardSize = 400;    // preview board pixel size (matches original canvas height)
 
 // --- Status management ---
 
@@ -177,40 +178,34 @@ async function processImage(img) {
     // Store state for phase 2
     currentImg = img;
     currentScale = scale;
+    boardSize = Math.min(w, h);
 
     // Enable interactive grid editor
     disableGridEditor(); // clean up any previous session
     enableGridEditor(originalCanvas, img, boardRect, scale, () => {});
 
-    // Show grid controls, hide palette and FEN results until confirmed
+    // Show grid controls and results
     gridControls.classList.remove('hidden');
-    piecePalette.classList.add('hidden');
-    previewCanvas.classList.remove('editable');
-    boardArray = null;
     resultsEl.classList.remove('hidden');
-    setStatus('Adjust the grid if needed, then click Confirm.', 'ready');
+
+    // Immediately classify pieces
+    await runClassification();
 }
 
-async function confirmGrid() {
-    // Grab grid lines before disabling the editor
+async function runClassification() {
+    // Grab grid lines (editor stays active)
     const { xLines, yLines } = getGridLines();
 
-    setStatus('Segmenting squares...', 'processing');
-    gridControls.classList.add('hidden');
-    disableGridEditor();
+    setStatus('Classifying pieces...', 'processing');
 
     // Extract tiles using the (possibly adjusted) grid lines
     const tiles = extractTilesFromGrid(currentImg, xLines, yLines);
 
     // Classify
-    setStatus('Classifying pieces...', 'processing');
     currentPredictions = await classifyBoard(tiles);
 
     // Detect orientation
     isFlipped = detectOrientation(currentPredictions);
-
-    // Draw final overlay (non-interactive) using grid lines
-    drawFinalOverlay(currentImg, xLines, yLines);
 
     // Build FEN and display
     updateFEN();
@@ -220,45 +215,7 @@ async function confirmGrid() {
     piecePalette.classList.remove('hidden');
     previewCanvas.classList.add('editable');
 
-    setStatus('Done! Click squares on the board to edit pieces.', 'ready');
-}
-
-function drawFinalOverlay(img, xLines, yLines) {
-    const scale = currentScale;
-    const w = originalCanvas.width;
-    const h = originalCanvas.height;
-
-    const ctx = originalCanvas.getContext('2d');
-    ctx.clearRect(0, 0, w, h);
-    ctx.drawImage(img, 0, 0, w, h);
-
-    // Draw outer border
-    const left = xLines[0] * scale;
-    const right = xLines[8] * scale;
-    const top = yLines[0] * scale;
-    const bottom = yLines[8] * scale;
-
-    ctx.strokeStyle = '#6c63ff';
-    ctx.lineWidth = 3;
-    ctx.strokeRect(left, top, right - left, bottom - top);
-
-    // Draw grid lines
-    ctx.strokeStyle = 'rgba(108, 99, 255, 0.7)';
-    ctx.lineWidth = 2;
-    for (let i = 1; i <= 7; i++) {
-        const x = xLines[i] * scale;
-        ctx.beginPath();
-        ctx.moveTo(x, top);
-        ctx.lineTo(x, bottom);
-        ctx.stroke();
-    }
-    for (let i = 1; i <= 7; i++) {
-        const y = yLines[i] * scale;
-        ctx.beginPath();
-        ctx.moveTo(left, y);
-        ctx.lineTo(right, y);
-        ctx.stroke();
-    }
+    setStatus('Done! Adjust grid and click Re-detect if needed.', 'ready');
 }
 
 function updateFEN() {
@@ -268,7 +225,7 @@ function updateFEN() {
     fenText.value = fen;
 
     // Update preview board
-    renderBoard(previewCanvas, fen);
+    renderBoard(previewCanvas, fen, boardSize);
 
     // Update Lichess link
     lichessLink.href = `https://lichess.org/analysis/${fen.replaceAll(' ', '_')}`;
@@ -312,8 +269,8 @@ resetGridBtn.addEventListener('click', () => {
     enableGridEditor(originalCanvas, currentImg, boardRect, scale, () => {});
 });
 
-confirmGridBtn.addEventListener('click', () => {
-    confirmGrid().catch(err => {
+redetectBtn.addEventListener('click', () => {
+    runClassification().catch(err => {
         setStatus(`Error: ${err.message}`, 'error');
         console.error('Classification error:', err);
     });
@@ -403,15 +360,15 @@ async function showGridEditor(img, gridLines) {
 
     currentImg = img;
     currentScale = scale;
+    boardSize = Math.min(w, h);
 
     enableGridEditor(originalCanvas, img, null, scale, () => {}, gridLines);
 
     gridControls.classList.remove('hidden');
-    piecePalette.classList.add('hidden');
-    previewCanvas.classList.remove('editable');
-    boardArray = null;
     resultsEl.classList.remove('hidden');
-    setStatus('Adjust the grid if needed, then click Confirm.', 'ready');
+
+    // Immediately classify pieces
+    await runClassification();
 }
 
 /**
@@ -543,13 +500,14 @@ function canvasToSquare(e) {
     const scaleY = previewCanvas.height / bounds.height;
     const x = (e.clientX - bounds.left) * scaleX;
     const y = (e.clientY - bounds.top) * scaleY;
-    return { file: Math.floor(x / 50), rank: Math.floor(y / 50) };
+    const sq = boardSize / 8;
+    return { file: Math.floor(x / sq), rank: Math.floor(y / sq) };
 }
 
 function refreshBoardDisplay() {
     const fen = boardToFen(boardArray);
     fenText.value = fen;
-    renderBoard(previewCanvas, fen);
+    renderBoard(previewCanvas, fen, boardSize);
     lichessLink.href = `https://lichess.org/analysis/${fen.replaceAll(' ', '_')}`;
 }
 
