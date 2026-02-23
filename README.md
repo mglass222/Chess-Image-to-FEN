@@ -17,7 +17,7 @@ Convert chess board screenshots into FEN notation directly in your browser.
 ## How It Works
 
 1. **Board Detection** — Finds the chessboard region using chessboard pattern scoring, then refines to pixel accuracy with gradient-based grid line alignment
-2. **Manual Grid Adjustment** — If auto-detection isn't perfect, you can drag the corner handles and individual gridlines to align them with the board. This is especially useful for photos of physical boards taken at an angle.
+2. **Manual Grid Adjustment** — If auto-detection isn't perfect, you can drag the corner handles and individual gridlines to align them with the board. This is especially useful for photos of from books taken at an angle.
 
    ![Grid adjustment example](assets/grid-adjustment.png)
 
